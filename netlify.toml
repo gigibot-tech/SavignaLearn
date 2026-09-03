@@ -19,6 +19,11 @@
 
 # Static files in dist/client win; missing paths (API + dynamic routes) hit Expo.
 [[redirects]]
+  from = "/"
+  to = "/.netlify/functions/server"
+  status = 404
+
+[[redirects]]
   from = "/*"
   to = "/.netlify/functions/server"
   status = 404
