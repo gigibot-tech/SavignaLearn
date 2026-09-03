@@ -1,0 +1,7 @@
+const { getDefaultConfig } = require('expo/metro-config');
+
+const config = getDefaultConfig(__dirname);
+config.resolver.unstable_enablePackageExports = true;
+config.resolver.assetExts = [...new Set([...(config.resolver.assetExts ?? []), 'wasm', 'onnx'])];
+
+module.exports = config;

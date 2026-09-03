@@ -1,0 +1,18 @@
+{
+  "name": "SavignaLearn",
+  "short_name": "Savigna",
+  "description": "Bilingual learning chat with line-by-line and Birkenbihl modes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF1E6",
+  "theme_color": "#BD403F",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
