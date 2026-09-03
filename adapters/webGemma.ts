@@ -173,8 +173,23 @@ export function probeWebGemma(): ProbeResult {
   return { id: 'webgpu', label: 'WebGPU Gemma', ok: false, detail: 'waiting to load' };
 }
 
+const TRANSFORMERS_CDN_VERSION = '4.2.0';
+
+/** Browser-only: load from CDN so Metro/Netlify never bundle onnxruntime-web. */
 async function importTransformers() {
-  const mod = await import('@huggingface/transformers');
+  const url = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${TRANSFORMERS_CDN_VERSION}/+esm`;
+  const mod = (await import(/* webpackIgnore: true */ /* @vite-ignore */ url)) as {
+    env: {
+      allowLocalModels?: boolean;
+      version?: string;
+      backends?: { onnx?: { wasm?: { numThreads?: number; wasmPaths?: string } } };
+    };
+    pipeline: (
+      task: string,
+      model: string,
+      options: { device: string; dtype: string }
+    ) => Promise<unknown>;
+  };
   const env = mod.env as {
     allowLocalModels?: boolean;
     version?: string;
@@ -184,7 +199,7 @@ async function importTransformers() {
   const wasm = env.backends?.onnx?.wasm;
   if (wasm) {
     wasm.numThreads = 1;
-    wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${env.version ?? '4.2.0'}/dist/`;
+    wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${env.version ?? TRANSFORMERS_CDN_VERSION}/dist/`;
   }
   return mod;
 }
