@@ -10,7 +10,7 @@ SavignaLearn is **not** a Vite SPA. It is Expo Router with `web.output: "server"
 | **Build command** | `npm run build:web` (`expo export -p web`) |
 | **Publish directory** | `dist/client` |
 | **Functions directory** | `netlify/functions` |
-| **Node** | 20 (`netlify.toml` sets `NODE_VERSION`) |
+| **Node** | 22 (`netlify.toml` sets `NODE_VERSION`; required by `@supabase/supabase-js` realtime) |
 
 `netlify.toml` already encodes build, publish, functions, and the 404 fallback to `/.netlify/functions/server`. Do not add `public/_redirects` with `/* /index.html 200` — that intercepts `/api/*`.
 

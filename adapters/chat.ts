@@ -109,9 +109,23 @@ class UnavailableChatRepository implements ChatRepository {
   }
 }
 
-const cloudChat = isIdoAiConfigured()
-  ? new SupabaseChatRepository(getIdoSupabase(), createChatContentCipher())
-  : new UnavailableChatRepository('cloud');
+function cloudChatRepository(): ChatRepository {
+  if (!isIdoAiConfigured()) return new UnavailableChatRepository('cloud');
+  let inner: ChatRepository | null = null;
+  const get = (): ChatRepository => {
+    inner ??= new SupabaseChatRepository(getIdoSupabase(), createChatContentCipher());
+    return inner;
+  };
+  return new Proxy({} as ChatRepository, {
+    get(_target, prop) {
+      const repo = get();
+      const value = Reflect.get(repo as object, prop);
+      return typeof value === 'function' ? value.bind(repo) : value;
+    },
+  });
+}
+
+const cloudChat = cloudChatRepository();
 const routedChat = new PolicyChatRepository(
   { local: memoryChat, cloud: cloudChat },
   chatStoragePolicy,

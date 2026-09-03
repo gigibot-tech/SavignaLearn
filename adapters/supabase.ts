@@ -15,6 +15,7 @@ import type {
 import { conversationPreviewFor, mediaKindOf } from '@/domain/chat';
 import type { AuthPort, AuthUser, ChatContentCipher, ChatRepository } from '@/ports/ports';
 import { MixedAuthAdapter, isMixedIdentityConfigured } from '@/adapters/mixedAuth';
+import { supabaseAuthClientOptions } from '@/adapters/supabaseClientOptions';
 import {
   authStorage,
   clearLocalDemoSession,
@@ -36,15 +37,7 @@ export function getSupabaseClient(): SupabaseClient {
     throw new Error('Missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY');
   }
   if (!client) {
-    client = createClient(url, anonKey, {
-      auth: {
-        storage: authStorage,
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-        storageKey: 'savignalearn.auth.token',
-      },
-    });
+    client = createClient(url, anonKey, supabaseAuthClientOptions('savignalearn.auth.token'));
   }
   return client;
 }

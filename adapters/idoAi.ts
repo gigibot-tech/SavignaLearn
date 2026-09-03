@@ -5,7 +5,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { authStorage } from '@/adapters/authStorage';
+import { supabaseAuthClientOptions } from '@/adapters/supabaseClientOptions';
 import type { ChatCompleteOptions, ChatCompletionMessage, ChatCompletionPort } from '@/ports/ports';
 
 const idoUrl =
@@ -24,15 +24,7 @@ export function getIdoSupabase(): SupabaseClient {
     throw new Error('iDO Supabase URL/anon key not configured');
   }
   if (!idoClient) {
-    idoClient = createClient(idoUrl, idoAnon, {
-      auth: {
-        storage: authStorage,
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-        storageKey: 'savignalearn.ido.auth.token',
-      },
-    });
+    idoClient = createClient(idoUrl, idoAnon, supabaseAuthClientOptions('savignalearn.ido.auth.token'));
   }
   return idoClient;
 }

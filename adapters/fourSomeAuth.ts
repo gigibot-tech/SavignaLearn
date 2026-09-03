@@ -5,7 +5,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { authStorage } from '@/adapters/authStorage';
+import { supabaseAuthClientOptions } from '@/adapters/supabaseClientOptions';
 import { identityFromSupabaseUser, type IdentityUser } from '@/adapters/identity';
 
 const url = (process.env.EXPO_PUBLIC_FOURSOME_SUPABASE_URL || '').replace(/\/$/, '');
@@ -22,15 +22,7 @@ export function getFourSomeSupabase(): SupabaseClient {
     throw new Error('fourSome Supabase URL/anon key not configured');
   }
   if (!client) {
-    client = createClient(url, anon, {
-      auth: {
-        storage: authStorage,
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: false,
-        storageKey: 'savignalearn.foursome.auth.token',
-      },
-    });
+    client = createClient(url, anon, supabaseAuthClientOptions('savignalearn.foursome.auth.token'));
   }
   return client;
 }
