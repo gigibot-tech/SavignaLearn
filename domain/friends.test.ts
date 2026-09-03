@@ -4,12 +4,15 @@ import {
   DEMO_LEARNER_ID,
   ICESTORM_EMAIL,
   ICESTORM_PROFILE_ID,
+  IDO_LEARN_EMAIL,
+  IDO_LEARN_USER_ID,
   dualDirectoryError,
   existingIncomingFrom,
   friendRequestErrorMessage,
   friendSharePath,
   friendShareUrl,
   friendshipPairKey,
+  isDemoLearnerIdentity,
   kindForViewer,
   listFriendRows,
   normalizeUsername,
@@ -94,6 +97,17 @@ describe('parseFriendShareInput / friendShareUrl', () => {
 });
 
 describe('validateFriendRequest', () => {
+  it('cannot request an unknown email — never invent a target', () => {
+    expect(parseFriendIdentifier('ghost-not-real@nowhere.invalid')).toEqual({
+      kind: 'email',
+      email: 'ghost-not-real@nowhere.invalid',
+    });
+    expect(validateFriendRequest({ viewerId: me, target: null, existing: [] })).toEqual({
+      ok: false,
+      error: 'not_found',
+    });
+  });
+
   it('rejects missing, self, duplicate pending, and accepted', () => {
     expect(validateFriendRequest({ viewerId: me, target: null, existing: [] })).toEqual({
       ok: false,
@@ -209,6 +223,11 @@ describe('seedMutualAccepted learner ↔ icestormfroste', () => {
     expect(seedMutualAccepted(rows, ICESTORM_PROFILE_ID, DEMO_LEARNER_ID, '2026-01-01T00:00:00.000Z')).toBeNull();
     expect(rows).toHaveLength(1);
     expect(seedMutualAccepted(rows, DEMO_LEARNER_ID, LEARNING_BOT_USER_ID, '2026-01-01T00:00:00.000Z')).toBeNull();
+  });
+
+  it('treats the iDO learn@savigna.local user as the demo learner', () => {
+    expect(isDemoLearnerIdentity({ email: IDO_LEARN_EMAIL })).toBe(true);
+    expect(isDemoLearnerIdentity({ id: IDO_LEARN_USER_ID })).toBe(true);
   });
 });
 

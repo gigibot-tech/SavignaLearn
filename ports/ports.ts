@@ -83,6 +83,17 @@ export interface ChatCompletionPort {
   isAvailable(): boolean;
 }
 
+export interface ChatContentCipher {
+  readonly version: number;
+  readonly alg: string;
+  seal(plaintext: string): Promise<{ ciphertext: string; encVersion: number; encAlg: string }>;
+  open(input: {
+    ciphertext: string;
+    encVersion?: number | null;
+    encAlg?: string | null;
+  }): Promise<string>;
+}
+
 export interface AuthUser {
   id: string;
   email?: string;
@@ -132,7 +143,14 @@ export interface VocabularyCardPort {
 
 export interface LearningItemRepository {
   save(item: LearningItem): Promise<LearningItem>;
+  findById(id: string): Promise<LearningItem | null>;
   findByWord(userId: string, word: string): Promise<LearningItem | null>;
+  findByIdentity(
+    userId: string,
+    word: string,
+    language: LanguageCode | undefined,
+    source: LearningSource
+  ): Promise<LearningItem | null>;
   listBySource(source: LearningSource): Promise<LearningItem[]>;
   listForUser(userId: string): Promise<LearningItem[]>;
 }

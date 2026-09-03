@@ -1,14 +1,14 @@
-import {
-  LEARNING_BOT_USER_ID,
-  sourceMessageFromText,
-  type Conversation,
-  type LineTranslation,
-  type ReceiptStatus,
-  type SourceMessage,
-} from '@/domain/chat';
-import { createLearningItem, learningSourceKey, type LearningItem, type LearningSource } from '@/domain/learning';
 import { tokenizeText } from '@/domain/text';
-import { isSupabaseConfigured } from '@/adapters/supabase';
+import { getVocabularyCardPrompt } from '@/gigolingo-shared/vocabularyPrompts';
+import { InMemoryChatRepository } from '@/adapters/memoryChat';
+import { authStorage } from '@/adapters/authStorage';
+import {
+  InMemoryChatRouteBook,
+  LocalFirstChatPolicy,
+  PolicyChatRepository,
+  type ChatStorageBackendId,
+} from '@/adapters/chatCloud';
+import { createChatContentCipher } from '@/adapters/chatCipher';
 import {
   completeFourSomeWebSocket,
   defaultAiBackend as readDefaultAiBackend,
@@ -20,7 +20,9 @@ import {
   onPremChatBaseUrl,
   type AiBackendId,
 } from '@/adapters/aiBackend';
+import { getIdoSupabase, isIdoAiConfigured } from '@/adapters/idoAi';
 import { IdoCoreChatCompletionAdapter } from '@/adapters/idoAi';
+import { SupabaseChatRepository } from '@/adapters/supabase';
 import {
   completeWithWebGemma,
   getWebGemmaStatus,
@@ -33,10 +35,8 @@ import type {
   ChatCompletionMessage,
   ChatCompletionPort,
   ChatRepository,
-  LearningItemRepository,
   MediaCatalogPort,
   TokenizerPort,
-  VocabularyCardPort,
   WordTapPort,
 } from '@/ports/ports';
 
@@ -51,158 +51,72 @@ export {
 
 /**
  * Chat repository + completion + learning stubs.
- * In-memory for demo/TDD; Supabase adapter when env configured.
+ * Inbox/thread default is local KV (`savigna.chat.v1.<userId>`).
+ * Cloud savigna_* is opt-in per chat, not used because an iDO JWT exists.
  */
 
-export class InMemoryChatRepository implements ChatRepository {
-  conversations: Conversation[] = [];
-  messages = new Map<string, SourceMessage[]>();
-  translations = new Map<string, LineTranslation[]>();
-  private listeners = new Map<string, Array<(messages: SourceMessage[]) => void>>();
+export { InMemoryChatRepository } from '@/adapters/memoryChat';
 
-  seedDemo(viewerId: string, partnerId: string) {
-    const conversation: Conversation = {
-      id: 'demo-1',
-      participantIds: [viewerId, partnerId],
-      participants: [
-        { userId: viewerId, nativeLang: 'en', learningLang: 'de' },
-        { userId: partnerId, nativeLang: 'de', learningLang: 'en' },
-      ],
-      aiEnabled: true,
-      updatedAt: new Date().toISOString(),
-      lastMessagePreview: 'Guten Morgen',
-      unreadCount: 1,
-      title: 'Alex · DE↔EN',
-    };
-    this.conversations = [conversation];
-    this.messages.set('demo-1', [
-      sourceMessageFromText({
-        id: 'msg-1',
-        conversationId: 'demo-1',
-        authorId: partnerId,
-        sourceLang: 'de',
-        sourceText: 'Guten Morgen\nWie geht es dir?',
-        kind: partnerId === LEARNING_BOT_USER_ID ? 'ai' : 'user',
-        receipt: 'read',
-        createdAt: new Date(Date.now() - 60_000).toISOString(),
-      }),
-    ]);
-    this.translations.set('msg-1', [
-      { lineIndex: 0, targetLang: 'en', text: 'Good morning', mode: 'lines' },
-      { lineIndex: 1, targetLang: 'en', text: 'How are you?', mode: 'lines' },
-      { lineIndex: 0, targetLang: 'de', text: 'Guten Morgen', mode: 'lines' },
-      { lineIndex: 1, targetLang: 'de', text: 'Wie geht es dir?', mode: 'lines' },
-    ]);
+export const memoryChat = new InMemoryChatRepository(authStorage);
+const chatRouteBook = new InMemoryChatRouteBook();
+const chatStoragePolicy = new LocalFirstChatPolicy(chatRouteBook);
+
+class UnavailableChatRepository implements ChatRepository {
+  constructor(private readonly backendId: ChatStorageBackendId) {}
+
+  private fail(): never {
+    throw new Error(`${this.backendId} chat backend is not configured`);
   }
 
-  async listConversations(userId?: string): Promise<Conversation[]> {
-    const list = userId
-      ? this.conversations.filter((item) => item.participantIds.includes(userId))
-      : [...this.conversations];
-    return list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  async listConversations(): Promise<never> {
+    this.fail();
   }
 
-  async getConversation(id: string): Promise<Conversation | null> {
-    return this.conversations.find((item) => item.id === id) ?? null;
+  async getConversation(): Promise<never> {
+    this.fail();
   }
 
-  async createConversation(input: {
-    participantIds: string[];
-    participants: Conversation['participants'];
-    aiEnabled: boolean;
-    title?: string;
-  }): Promise<Conversation> {
-    const conversation: Conversation = {
-      id: `c-${Date.now()}`,
-      participantIds: input.participantIds,
-      participants: input.participants,
-      aiEnabled: input.aiEnabled,
-      title: input.title,
-      updatedAt: new Date().toISOString(),
-      unreadCount: 0,
-    };
-    this.conversations.unshift(conversation);
-    this.messages.set(conversation.id, []);
-    return conversation;
+  async createConversation(): Promise<never> {
+    this.fail();
   }
 
-  async listMessages(conversationId: string): Promise<SourceMessage[]> {
-    return [...(this.messages.get(conversationId) ?? [])];
+  async listMessages(): Promise<never> {
+    this.fail();
   }
 
-  async appendMessage(message: SourceMessage): Promise<SourceMessage> {
-    const list = this.messages.get(message.conversationId) ?? [];
-    const existing = list.findIndex((item) => item.id === message.id);
-    if (existing >= 0) {
-      list[existing] = message;
-    } else {
-      list.push(message);
-    }
-    this.messages.set(message.conversationId, list);
-    const conversation = this.conversations.find((item) => item.id === message.conversationId);
-    if (conversation) {
-      conversation.lastMessagePreview = messagePreview(message);
-      conversation.updatedAt = message.createdAt;
-    }
-    this.emit(message.conversationId);
-    return message;
+  async appendMessage(): Promise<never> {
+    this.fail();
   }
 
-  async updateReceipt(messageId: string, receipt: ReceiptStatus): Promise<void> {
-    for (const [conversationId, list] of this.messages) {
-      const found = list.find((item) => item.id === messageId);
-      if (found) {
-        found.receipt = receipt;
-        this.emit(conversationId);
-        return;
-      }
-    }
+  async updateReceipt(): Promise<never> {
+    this.fail();
   }
 
-  async saveTranslations(messageId: string, translations: LineTranslation[]): Promise<void> {
-    const existing = this.translations.get(messageId) ?? [];
-    const byKey = new Map(
-      existing.map((t) => [`${t.lineIndex}:${t.targetLang}:${t.mode}`, t] as const)
-    );
-    for (const item of translations) {
-      byKey.set(`${item.lineIndex}:${item.targetLang}:${item.mode}`, item);
-    }
-    this.translations.set(messageId, [...byKey.values()]);
+  async saveTranslations(): Promise<never> {
+    this.fail();
   }
 
-  async listTranslations(messageId: string): Promise<LineTranslation[]> {
-    return this.translations.get(messageId) ?? [];
+  async listTranslations(): Promise<never> {
+    this.fail();
   }
 
-  async updateParticipants(
-    conversationId: string,
-    participants: Conversation['participants']
-  ): Promise<void> {
-    const conversation = this.conversations.find((item) => item.id === conversationId);
-    if (conversation) conversation.participants = participants;
+  async updateParticipants(): Promise<never> {
+    this.fail();
   }
 
-  subscribe(conversationId: string, onChange: (messages: SourceMessage[]) => void): () => void {
-    const current = this.listeners.get(conversationId) ?? [];
-    current.push(onChange);
-    this.listeners.set(conversationId, current);
-    return () => {
-      this.listeners.set(
-        conversationId,
-        (this.listeners.get(conversationId) ?? []).filter((fn) => fn !== onChange)
-      );
-    };
-  }
-
-  private emit(conversationId: string) {
-    const messages = this.messages.get(conversationId) ?? [];
-    for (const listener of this.listeners.get(conversationId) ?? []) {
-      listener([...messages]);
-    }
+  subscribe(): () => void {
+    this.fail();
   }
 }
 
-export const memoryChat = new InMemoryChatRepository();
+const cloudChat = isIdoAiConfigured()
+  ? new SupabaseChatRepository(getIdoSupabase(), createChatContentCipher())
+  : new UnavailableChatRepository('cloud');
+const routedChat = new PolicyChatRepository(
+  { local: memoryChat, cloud: cloudChat },
+  chatStoragePolicy,
+  chatRouteBook
+);
 
 function openAiJsonFormat(json?: boolean): { response_format?: { type: 'json_object' } } {
   return json ? { response_format: { type: 'json_object' } } : {};
@@ -558,13 +472,9 @@ export class OnPremChatCompletionAdapter implements ChatCompletionPort {
   }
 }
 
-/** Vocabulary card prompts (Gigolingo-compatible) for VocabularyCardPort adapters. */
+/** Vocabulary card prompts — Gigolingo `getVocabularyCardPrompt` (copied into gigolingo-shared). */
 export function vocabularyCardPrompt(word: string, sentence: string, language = 'de') {
-  return {
-    systemPrompt: `You are an expert ${language} teacher. Return valid JSON only.`,
-    userPrompt: `Analyze "${word}" in context "${sentence}". Return JSON:
-{"word":"${word}","translation":"...","sentenceOrig":"${sentence}","sentenceEng":"...","reading":"","languageLevel":"A1-C2","frequency":"high|medium|low"}`,
-  };
+  return getVocabularyCardPrompt(word, sentence, language.toUpperCase(), 'EN');
 }
 
 const AI_BACKEND_STORAGE_KEY = 'savigna.aiBackend.v2';
@@ -632,20 +542,11 @@ export function createChatCompletion(
 }
 
 export function createChatRepository(seed?: { viewerId: string; partnerId: string }): ChatRepository {
-  if (isSupabaseConfigured()) {
-    // Lazy require avoids circular import at module init.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { SupabaseChatRepository } = require('@/adapters/supabase') as {
-      SupabaseChatRepository: new () => ChatRepository;
-    };
-    return new SupabaseChatRepository();
-  }
-  // One in-memory inbox for the tab — rebuilds must not wipe the seeded bot thread.
-  if (seed) memoryChat.seedDemo(seed.viewerId, seed.partnerId);
-  return memoryChat;
+  if (seed) routedChat.seedDemo(seed.viewerId, seed.partnerId);
+  return routedChat;
 }
 
-export { ensureLearningBotChat } from '@/adapters/learningBot';
+export { ensureLearningBotChat, listInboxConversations } from '@/adapters/learningBot';
 
 /** LONG-TERM: Gigolingo tokenizer / ShieldLine tokenization. */
 export const defaultTokenizer: TokenizerPort = {
@@ -662,53 +563,14 @@ export const noOpWordTap: WordTapPort = {
   },
 };
 
-export class FakeVocabularyCardAdapter implements VocabularyCardPort {
-  isAvailable(): boolean {
-    return true;
-  }
-
-  async generateVocabularyCard(
-    word: string,
-    sentence: string,
-    language?: string
-  ): Promise<LearningItem | null> {
-    return createLearningItem({
-      word,
-      translation: word,
-      sentenceOrig: sentence,
-      sentenceEng: sentence,
-      language,
-      source: { kind: 'manual' },
-    });
-  }
-}
-
-export class InMemoryLearningItemRepository implements LearningItemRepository {
-  private items: LearningItem[] = [];
-
-  async save(item: LearningItem): Promise<LearningItem> {
-    const stored = { ...item, id: item.id ?? `item-${this.items.length + 1}` };
-    this.items.push(stored);
-    return stored;
-  }
-
-  async findByWord(userId: string, word: string): Promise<LearningItem | null> {
-    return (
-      this.items.find(
-        (item) => item.userId === userId && item.word.toLowerCase() === word.toLowerCase()
-      ) ?? null
-    );
-  }
-
-  async listBySource(source: LearningSource): Promise<LearningItem[]> {
-    const key = learningSourceKey(source);
-    return this.items.filter((item) => learningSourceKey(item.source) === key);
-  }
-
-  async listForUser(userId: string): Promise<LearningItem[]> {
-    return this.items.filter((item) => item.userId === userId);
-  }
-}
+export {
+  ChatCompletionVocabularyCardAdapter,
+  FakeVocabularyCardAdapter,
+  InMemoryLearningItemRepository,
+  createVocabularyCardPort,
+  memoryLearningItems,
+  openOrCreateVocabularyCard,
+} from '@/adapters/vocabulary';
 
 /** LONG-TERM: Gigolingo media catalog. Empty by design in MVP. */
 export const emptyMediaCatalog: MediaCatalogPort = {

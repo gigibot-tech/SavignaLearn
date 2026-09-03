@@ -7,7 +7,6 @@ import {
   Image,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -35,7 +34,7 @@ export function ChatMediaImage({
   sticker?: boolean;
   accessibilityLabel?: string;
 }) {
-  const size = sticker ? 128 : 220;
+  const size = sticker ? 136 : 240;
   return (
     <Image
       source={mediaImageSource(url)}
@@ -46,7 +45,7 @@ export function ChatMediaImage({
         borderRadius: sticker ? 18 : 12,
         backgroundColor: 'rgba(0,0,0,0.08)',
       }}
-      resizeMode={sticker ? 'contain' : 'cover'}
+      resizeMode="contain"
     />
   );
 }
@@ -59,12 +58,7 @@ export function StickerTray({
   onPick: (media: OutgoingMedia) => void;
 }) {
   return (
-    <ScrollView
-      horizontal
-      keyboardShouldPersistTaps="handled"
-      contentContainerStyle={styles.tray}
-      accessibilityLabel="Default stickers"
-    >
+    <View style={styles.trayGrid} accessibilityLabel="Default stickers">
       {DEFAULT_STICKER_PACK.map((item) => (
         <Pressable
           key={item.id}
@@ -84,7 +78,7 @@ export function StickerTray({
           </Text>
         </Pressable>
       ))}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -111,7 +105,7 @@ export function ComposerMediaButtons({
       reader.readAsDataURL(file);
     });
     if (!url.startsWith('data:image/')) return;
-    onPickImage({ url, mediaKind: 'image', alt: file.name.replace(/\.[^.]+$/, '') });
+    onPickImage({ url, mediaKind: 'image' });
   };
 
   return (
@@ -160,7 +154,13 @@ export function ComposerMediaButtons({
 }
 
 const styles = StyleSheet.create({
-  tray: { gap: 10, paddingHorizontal: 4, paddingBottom: 4 },
+  trayGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
   stickerHit: {
     width: 88,
     alignItems: 'center',

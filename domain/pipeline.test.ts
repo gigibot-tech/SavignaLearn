@@ -5,6 +5,9 @@ import {
   InMemoryChatHistoryStore,
   completeBilingualBotReply,
   processOutgoingTranslation,
+  recalculateBirkenbihlForMessage,
+  recalculateBirkenbihlForThread,
+  retryBubbleTranslations,
 } from '@/adapters/translation';
 import { sourceMessageFromText } from './chat';
 import {
@@ -14,6 +17,8 @@ import {
   buildTranslationPayload,
   createChatHistoryRecord,
   extractChatReplyText,
+  mergeLineTranslations,
+  mergeTranslationMaps,
   mergeTranslationsByMode,
   parseBilingualChatJson,
   parseDetectThenTranslateJson,
@@ -21,7 +26,6 @@ import {
   transitionChatHistory,
   type AsymmetricLanguageContext,
 } from './pipeline';
-import { recalculateBirkenbihlForMessage, recalculateBirkenbihlForThread } from '@/adapters/translation';
 
 const asymmetric: AsymmetricLanguageContext = {
   senderUserId: 'u1',
@@ -74,7 +78,8 @@ describe('asymmetric translation payload', () => {
     );
     expect(systemPrompt).toMatch(/STEP 1.*Identify/i);
     expect(systemPrompt).toMatch(/interlinear/i);
-    expect(systemPrompt).toMatch(/\[.*hint/i);
+    expect(systemPrompt).toMatch(/square brackets/i);
+    expect(systemPrompt).toContain('Hola [Hi] mundo [world]');
     expect(systemPrompt).not.toMatch(/one translated line per input line/i);
     expect(standard.systemPrompt).toMatch(/Mode Standard/);
     expect(standard.systemPrompt).not.toEqual(systemPrompt);
@@ -450,9 +455,48 @@ describe('bilingual chat JSON (SavignasBoi)', () => {
     expect(byCode?.nativeText).toBe('Good morning');
   });
 
+  it('parses bilingual JSON with camelCase keys', () => {
+    const parsed = parseBilingualChatJson(
+      '{"learningText":"Hallo! Wie geht\\u0027s dir?","nativeText":"Hi! How are you?","detectedSourceLang":"de"}',
+      'de',
+      'en'
+    );
+    expect(parsed?.learningText).toBe("Hallo! Wie geht's dir?");
+    expect(parsed?.nativeText).toBe('Hi! How are you?');
+    expect(parsed?.detectedSourceLang).toBe('de');
+  });
+
   it('does not leak raw JSON into the bubble when the shape is incomplete', () => {
     expect(extractChatReplyText('{"reply":"Hallo!"}')).toBe('Hallo!');
     expect(parseBilingualChatJson('{"reply":"Hallo!"}', 'de', 'en')).toBeNull();
+    expect(
+      parseBilingualChatJson(
+        '{"learning_text":"Algunas palabras similares son billete.","native_text":"Algunas palabras similares son billete.","detected_source_lang":"es"}',
+        'es',
+        'en'
+      )
+    ).toBeNull();
+    expect(parseBilingualChatJson('{"es":"Hola","en":"Hola"}', 'es', 'en')).toBeNull();
+  });
+
+  it('does not drop a stored native lines row when a later snapshot is incomplete', () => {
+    const stored = [
+      { lineIndex: 0, targetLang: 'es', mode: 'lines' as const, text: 'Algunas palabras similares son billete.' },
+      { lineIndex: 0, targetLang: 'en', mode: 'lines' as const, text: 'Some similar words are ticket.' },
+    ];
+    const incompleteReload = [
+      { lineIndex: 0, targetLang: 'es', mode: 'lines' as const, text: 'Algunas palabras similares son billete.' },
+    ];
+    const merged = mergeLineTranslations(stored, incompleteReload);
+    expect(merged.find((row) => row.targetLang === 'en')?.text).toBe('Some similar words are ticket.');
+    expect(merged.find((row) => row.targetLang === 'es')?.text).toMatch(/Algunas/);
+
+    const maps = mergeTranslationMaps(
+      { bot: stored },
+      { bot: incompleteReload, other: [{ lineIndex: 0, targetLang: 'de', mode: 'lines', text: 'Hallo' }] }
+    );
+    expect(maps.bot?.find((row) => row.targetLang === 'en')?.text).toBe('Some similar words are ticket.');
+    expect(maps.other?.[0]?.text).toBe('Hallo');
   });
 
   it('maps JSON-mode completion onto learning + native line translations', async () => {
@@ -462,7 +506,8 @@ describe('bilingual chat JSON (SavignasBoi)', () => {
         JSON.stringify({
           learning_text: 'Lass uns üben — du schriebst „heeyy“.',
           native_text: 'Let’s practice — you wrote “heeyy”.',
-          detected_source_lang: 'de',
+          // Model detection may be wrong; we still trust `learningLang`.
+          detected_source_lang: 'en',
         }),
     };
     const result = await completeBilingualBotReply({
@@ -472,9 +517,170 @@ describe('bilingual chat JSON (SavignasBoi)', () => {
       nativeLang: 'en',
     });
     expect(result.sourceText).toMatch(/Lass uns üben/);
+    expect(result.sourceLang).toBe('de');
     expect(result.translations.some((row) => row.targetLang === 'de')).toBe(true);
     expect(result.translations.some((row) => row.targetLang === 'en')).toBe(true);
     const native = result.translations.find((row) => row.targetLang === 'en')?.text ?? '';
     expect(native.toLowerCase()).toContain('practice');
+  });
+
+  it('keeps Retry — same-string bilingual JSON does not become two line translations', async () => {
+    const completion = {
+      isAvailable: () => true,
+      complete: async () =>
+        JSON.stringify({
+          learning_text: 'Algunas palabras similares son billete.',
+          native_text: 'Algunas palabras similares son billete.',
+          detected_source_lang: 'es',
+        }),
+    };
+    const result = await completeBilingualBotReply({
+      completion,
+      learnerText: 'what would be some words like tarjeta?',
+      learningLang: 'es',
+      nativeLang: 'en',
+    });
+    expect(result.translations).toEqual([]);
+  });
+
+  it('uses a pair-existing prompt that does not write a new reply', () => {
+    const { systemPrompt, userPrompt } = buildBilingualChatPrompt({
+      learningLang: 'es',
+      nativeLang: 'de',
+      learnerText: 'heeyy du wilder',
+      pairExisting: true,
+    });
+    expect(systemPrompt).toMatch(/EXISTING chat message/);
+    expect(systemPrompt).not.toMatch(/Write a short 1-3 line reply/);
+    expect(userPrompt).toContain('existing_message:');
+    expect(userPrompt).toContain('heeyy du wilder');
+  });
+});
+
+describe('retryBubbleTranslations', () => {
+  it('does not wipe sourceText when recalculating Standard lines', async () => {
+    const store = new InMemoryChatHistoryStore();
+    const message = sourceMessageFromText({
+      id: 'm-retry',
+      conversationId: 'c1',
+      authorId: 'u1',
+      sourceLang: 'de',
+      sourceText: 'heeyy du wilder',
+      kind: 'user',
+    });
+    const birken = {
+      lineIndex: 0,
+      targetLang: 'de',
+      mode: 'birkenbihl' as const,
+      text: 'heeyy [hey] du [you] wilder [wild]',
+    };
+    const next = await retryBubbleTranslations({
+      message,
+      existingTranslations: [birken],
+      asymmetric: {
+        senderUserId: 'u1',
+        receiverUserId: 'u2',
+        senderLearningLang: 'es',
+        receiverLearningLang: 'en',
+        senderNativeLang: 'de',
+        receiverNativeLang: 'en',
+      },
+      mode: 'standard',
+      engine: new EchoTranslationEngine(),
+      historyStore: store,
+      learningLang: 'es',
+      nativeLang: 'de',
+    });
+    expect(message.sourceText).toBe('heeyy du wilder');
+    expect(next.some((row) => row.mode === 'birkenbihl' && row.text === birken.text)).toBe(true);
+    expect(next.some((row) => row.mode === 'lines')).toBe(true);
+  });
+
+  it('keeps sourceText when a bot JSON pair recalc runs', async () => {
+    const store = new InMemoryChatHistoryStore();
+    const message = sourceMessageFromText({
+      id: 'm-ai',
+      conversationId: 'c1',
+      authorId: 'savigna-ai',
+      sourceLang: 'es',
+      sourceText: '¿Qué tal?',
+      kind: 'ai',
+    });
+    const completion = {
+      isAvailable: () => true,
+      complete: async () =>
+        JSON.stringify({
+          learning_text: '¿Qué tal?',
+          native_text: 'Wie geht’s?',
+          detected_source_lang: 'es',
+        }),
+    };
+    const next = await retryBubbleTranslations({
+      message,
+      existingTranslations: [],
+      asymmetric,
+      mode: 'standard',
+      engine: new EchoTranslationEngine(),
+      historyStore: store,
+      completion,
+      learningLang: 'es',
+      nativeLang: 'de',
+    });
+    expect(message.sourceText).toBe('¿Qué tal?');
+    expect(next.some((row) => row.targetLang === 'de' && row.text.includes('Wie'))).toBe(true);
+  });
+
+  it('updates only missing native lines (preserves learning + other native lines)', async () => {
+    const store = new InMemoryChatHistoryStore();
+    const message = sourceMessageFromText({
+      id: 'm-ai-missing-native',
+      conversationId: 'c1',
+      authorId: 'savigna-ai',
+      sourceLang: 'de',
+      sourceText: 'a0\na1',
+      kind: 'ai',
+    });
+
+    const existingTranslations = [
+      // Learning lines already correct — must stay unchanged.
+      { lineIndex: 0, targetLang: 'de', mode: 'lines' as const, text: 'LEARN0' },
+      { lineIndex: 1, targetLang: 'de', mode: 'lines' as const, text: 'LEARN1' },
+      // Native: line 0 missing, line 1 present — must preserve line 1.
+      { lineIndex: 0, targetLang: 'en', mode: 'lines' as const, text: '' },
+      { lineIndex: 1, targetLang: 'en', mode: 'lines' as const, text: 'NATIVE1_OK' },
+    ];
+
+    const completion = {
+      isAvailable: () => true,
+      complete: async () =>
+        JSON.stringify({
+          learning_text: 'LEARN0_REGEN\nLEARN1_REGEN',
+          native_text: 'NATIVE0_NEW\nNATIVE1_WRONG',
+          detected_source_lang: 'en',
+        }),
+    };
+
+    const next = await retryBubbleTranslations({
+      message,
+      existingTranslations,
+      asymmetric,
+      mode: 'standard',
+      engine: new EchoTranslationEngine(),
+      historyStore: store,
+      completion,
+      learningLang: 'de',
+      nativeLang: 'en',
+      mismatchReason: 'missing_native',
+    });
+
+    const learning0 = next.find((r) => r.targetLang === 'de' && r.lineIndex === 0)?.text;
+    const learning1 = next.find((r) => r.targetLang === 'de' && r.lineIndex === 1)?.text;
+    expect(learning0).toBe('LEARN0');
+    expect(learning1).toBe('LEARN1');
+
+    const native0 = next.find((r) => r.targetLang === 'en' && r.lineIndex === 0)?.text;
+    const native1 = next.find((r) => r.targetLang === 'en' && r.lineIndex === 1)?.text;
+    expect(native0).toBe('NATIVE0_NEW');
+    expect(native1).toBe('NATIVE1_OK');
   });
 });

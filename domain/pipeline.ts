@@ -5,6 +5,7 @@
 
 import type { DisplayMode, LanguageCode, LineTranslation, SourceMessage } from './chat';
 import { LEARNING_BOT_DISPLAY_NAME, splitSourceLines } from './chat';
+import { isUsableBirkenbihlOverlay } from './text';
 
 /** Story alias: Standard = lines mode. */
 export type TranslationMode = 'standard' | 'birkenbihl';
@@ -45,6 +46,8 @@ export function buildTranslationPayload(input: {
   text: string;
   mode: TranslationMode | DisplayMode;
   asymmetric: AsymmetricLanguageContext;
+  /** Override primary target (Birkenbihl hints use native, not L2). */
+  translateInto?: LanguageCode;
 }): TranslationLlmPayload {
   const mode: TranslationMode =
     input.mode === 'birkenbihl' || input.mode === 'standard'
@@ -55,8 +58,47 @@ export function buildTranslationPayload(input: {
     mode,
     detectSourceFirst: true,
     asymmetric: input.asymmetric,
-    translateInto: input.asymmetric.receiverLearningLang,
+    translateInto: input.translateInto ?? input.asymmetric.receiverLearningLang,
   };
+}
+
+/**
+ * Dedicated Birkenbihl prompt: interlinear original [hint] per phrase.
+ * Do not reuse Standard/lines output or a local word-split heuristic.
+ */
+export function buildBirkenbihlTranslatePrompt(payload: TranslationLlmPayload): {
+  systemPrompt: string;
+  userPrompt: string;
+} {
+  const { asymmetric, translateInto, text } = payload;
+  const learningLang = asymmetric.receiverLearningLang;
+  const systemPrompt = [
+    'You are SavignaLearn’s Birkenbihl decoding engine.',
+    'STEP 1 (mandatory): Identify the ISO 639-1 source language of the user text. Never skip detection.',
+    'STEP 2: Produce an interlinear decoding — not a prose translation, not a bilingual lines pair.',
+    `Learner target (learning) language: ${learningLang}. Original tokens MUST be in ${learningLang}.`,
+    `Hint language: ${translateInto}. Each original token is followed by a short [hint] in ${translateInto} (square brackets).`,
+    `Sender learning language: ${asymmetric.senderLearningLang}. Receiver learning language: ${asymmetric.receiverLearningLang}.`,
+    `Sender native: ${asymmetric.senderNativeLang}. Receiver native: ${asymmetric.receiverNativeLang}.`,
+    'Mode Birkenbihl: one output line per input line. Example: "Hola [Hi] mundo [world]".',
+    'If the source is already in the learning language, gloss it. If not, first express it in the learning language, then gloss.',
+    'Do not invent alignment by splitting an existing bilingual pair word-by-word. Do not return a separate prose translation.',
+    'Return JSON only: {"detected_source_lang":"xx","translation":"<interlinear lines>"}',
+  ].join(' ');
+
+  const userPrompt = [
+    `translate_into: ${translateInto}`,
+    `hint_lang: ${translateInto}`,
+    `learning_lang: ${learningLang}`,
+    `mode: birkenbihl`,
+    `detect_source_first: true`,
+    `sender_learning_lang: ${asymmetric.senderLearningLang}`,
+    `receiver_learning_lang: ${asymmetric.receiverLearningLang}`,
+    'text:',
+    text,
+  ].join('\n');
+
+  return { systemPrompt, userPrompt };
 }
 
 /**
@@ -67,7 +109,10 @@ export function buildDetectThenTranslatePrompt(payload: TranslationLlmPayload): 
   systemPrompt: string;
   userPrompt: string;
 } {
-  const { asymmetric, mode, translateInto, text } = payload;
+  if (payload.mode === 'birkenbihl') {
+    return buildBirkenbihlTranslatePrompt(payload);
+  }
+  const { asymmetric, translateInto, text } = payload;
   const systemPrompt = [
     'You are SavignaLearn’s translation engine.',
     'STEP 1 (mandatory): Identify the ISO 639-1 source language of the user text. Never skip detection.',
@@ -75,15 +120,13 @@ export function buildDetectThenTranslatePrompt(payload: TranslationLlmPayload): 
     `Sender learning language: ${asymmetric.senderLearningLang}.`,
     `Receiver learning language: ${asymmetric.receiverLearningLang} (PRIMARY translate-into target).`,
     `Sender native: ${asymmetric.senderNativeLang}. Receiver native: ${asymmetric.receiverNativeLang}.`,
-    mode === 'birkenbihl'
-      ? 'Mode Birkenbihl: output interlinear "original [short hint in translate-into language]" per phrase. Preserve line breaks.'
-      : 'Mode Standard (lines): output one translated line per input line. Preserve line breaks. No commentary.',
+    'Mode Standard (lines): output one translated line per input line. Preserve line breaks. No commentary.',
     'Return JSON only: {"detected_source_lang":"xx","translation":"..."}',
   ].join(' ');
 
   const userPrompt = [
     `translate_into: ${translateInto}`,
-    `mode: ${mode}`,
+    `mode: standard`,
     `detect_source_first: true`,
     `sender_learning_lang: ${asymmetric.senderLearningLang}`,
     `receiver_learning_lang: ${asymmetric.receiverLearningLang}`,
@@ -168,7 +211,29 @@ export function buildBilingualChatPrompt(input: {
   learningLang: LanguageCode;
   nativeLang: LanguageCode;
   learnerText: string;
+  /** Fill a bilingual pair for an existing bubble instead of writing a new reply. */
+  pairExisting?: boolean;
 }): { systemPrompt: string; userPrompt: string } {
+  if (input.pairExisting) {
+    const systemPrompt = [
+      'You are SavignaLearn’s bilingual pair engine.',
+      `Express this EXISTING chat message in ${input.learningLang} (learning_text) and ${input.nativeLang} (native_text).`,
+      'Do not write a new conversational reply. Do not change the meaning. Do not invent extra lines.',
+      'Return JSON only, no markdown:',
+      '{"learning_text":"...","native_text":"...","detected_source_lang":"xx"}',
+      `learning_text MUST be in ${input.learningLang} and MUST differ from native_text when the languages differ.`,
+      `native_text MUST be in ${input.nativeLang} and must not copy learning_text unless the languages are the same.`,
+      'detected_source_lang is the ISO 639-1 code of the original message.',
+    ].join(' ');
+    const userPrompt = [
+      `learning_lang: ${input.learningLang}`,
+      `native_lang: ${input.nativeLang}`,
+      'existing_message:',
+      input.learnerText,
+    ].join('\n');
+    return { systemPrompt, userPrompt };
+  }
+
   const systemPrompt = [
     `You are ${LEARNING_BOT_DISPLAY_NAME}, a friendly language learning partner.`,
     `Write a short 1-3 line reply in ${input.learningLang} (the learner’s target language).`,
@@ -199,18 +264,31 @@ export function parseBilingualChatJson(
   if (!parsed) return null;
   const learning = pickString(parsed, [
     'learning_text',
+    'learningText',
     'learning',
     learningLang,
     learningLang.toUpperCase(),
   ]);
   const native = pickString(parsed, [
     'native_text',
+    'nativeText',
     'native',
     nativeLang,
     nativeLang.toUpperCase(),
   ]);
   if (!learning || !native) return null;
-  const detected = pickString(parsed, ['detected_source_lang', 'source_lang']);
+  if (
+    learningLang.toLowerCase() !== nativeLang.toLowerCase() &&
+    learning.trim().toLowerCase() === native.trim().toLowerCase()
+  ) {
+    return null;
+  }
+  const detected = pickString(parsed, [
+    'detected_source_lang',
+    'detectedSourceLang',
+    'source_lang',
+    'sourceLang',
+  ]);
   return {
     learningText: learning,
     nativeText: native,
@@ -225,12 +303,14 @@ export function extractChatReplyText(raw: string): string {
   return (
     pickString(parsed, [
       'learning_text',
+      'learningText',
       'translation',
       'content',
       'reply',
       'message',
       'text',
       'native_text',
+      'nativeText',
     ]) ?? raw.trim()
   );
 }
@@ -273,7 +353,59 @@ export type ChatHistoryPipelineEvent =
   | { type: 'start_translate'; detectedSourceLang: LanguageCode }
   | { type: 'persist'; translations: LineTranslation[]; providerUsed: PipelineProvider }
   | { type: 'fail'; error: string }
-  | { type: 'switch_mode'; mode: TranslationMode };
+  | { type: 'switch_mode'; mode: TranslationMode }
+  | { type: 'recalculate_birkenbihl' }
+  | { type: 'persist_birkenbihl'; translations: LineTranslation[]; providerUsed: PipelineProvider };
+
+/** Replace one display mode’s rows; leave the other mode’s translations untouched. */
+export function mergeTranslationsByMode(
+  existing: LineTranslation[],
+  incoming: LineTranslation[],
+  replaceMode: DisplayMode
+): LineTranslation[] {
+  return [
+    ...existing.filter((row) => row.mode !== replaceMode),
+    ...incoming.filter((row) => row.mode === replaceMode),
+  ];
+}
+
+function translationRowKey(row: LineTranslation): string {
+  return `${row.lineIndex}:${row.targetLang.toLowerCase()}:${row.mode}`;
+}
+
+/**
+ * Union by line/lang/mode. Incoming nonempty rows update; empty incoming never
+ * wipes a stored nonempty native/`lines` row; keys only in `existing` stay.
+ */
+export function mergeLineTranslations(
+  existing: LineTranslation[],
+  incoming: LineTranslation[]
+): LineTranslation[] {
+  const byKey = new Map(existing.map((row) => [translationRowKey(row), row] as const));
+  for (const row of incoming) {
+    const key = translationRowKey(row);
+    const current = byKey.get(key);
+    if (!current || row.text.trim().length > 0) {
+      byKey.set(key, row);
+    }
+  }
+  return [...byKey.values()];
+}
+
+export function mergeTranslationMaps(
+  existing: Record<string, LineTranslation[]>,
+  incoming: Record<string, LineTranslation[]>
+): Record<string, LineTranslation[]> {
+  const out: Record<string, LineTranslation[]> = { ...existing };
+  for (const [id, rows] of Object.entries(incoming)) {
+    out[id] = mergeLineTranslations(existing[id] ?? [], rows);
+  }
+  return out;
+}
+
+export function hasBirkenbihlTranslation(translations: LineTranslation[]): boolean {
+  return translations.some((row) => row.mode === 'birkenbihl' && isUsableBirkenbihlOverlay(row.text));
+}
 
 /**
  * Testable chat-history object: message + translation mode + pipeline state.
@@ -320,11 +452,20 @@ export function transitionChatHistory(
     return {
       ...record,
       translationMode: event.mode,
-      translations: [],
-      detectedSourceLang: undefined,
-      providerUsed: undefined,
       lastError: undefined,
-      pipelineState: 'draft',
+      updatedAt,
+    };
+  }
+
+  if (event.type === 'recalculate_birkenbihl') {
+    if (record.pipelineState === 'detecting' || record.pipelineState === 'translating') {
+      throw new Error(`Cannot recalculate Birkenbihl while ${record.pipelineState}`);
+    }
+    return {
+      ...record,
+      translationMode: 'birkenbihl',
+      pipelineState: 'translating',
+      lastError: undefined,
       updatedAt,
     };
   }
@@ -354,6 +495,17 @@ export function transitionChatHistory(
           ...record,
           pipelineState: 'persisted',
           translations: event.translations,
+          providerUsed: event.providerUsed,
+          updatedAt,
+          lastError: undefined,
+        };
+      }
+      if (event.type === 'persist_birkenbihl') {
+        return {
+          ...record,
+          pipelineState: 'persisted',
+          translationMode: 'birkenbihl',
+          translations: mergeTranslationsByMode(record.translations, event.translations, 'birkenbihl'),
           providerUsed: event.providerUsed,
           updatedAt,
           lastError: undefined,

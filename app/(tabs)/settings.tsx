@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { router } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, Switch, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { getFourSomeEmail, isFourSomeAuthConfigured, signInFourSome, signOutFourSome } from '@/adapters/fourSomeAuth';
 import { getIdoEmail, isIdoAiConfigured, signInIdo, signOutIdo } from '@/adapters/idoAi';
@@ -14,6 +14,7 @@ import {
   GradientScreen,
   useThemeColors,
 } from '@/features/chat/chatUi';
+import { useNotifications } from '@/features/notifications/NotificationProvider';
 
 export default function SettingsScreen() {
   const scheme = useColorScheme();
@@ -22,6 +23,8 @@ export default function SettingsScreen() {
     useServices();
   const { user } = useAuthState();
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
+  const { supported, enabled, permission, requestEnable, disable } = useNotifications();
+  const [notifBusy, setNotifBusy] = useState(false);
   const [idoEmail, setIdoEmail] = useState<string | null>(user?.idoUserId ? user.email ?? null : null);
   const [fourSomeEmail, setFourSomeEmail] = useState<string | null>(null);
   const [email, setEmail] = useState('');
@@ -121,6 +124,43 @@ export default function SettingsScreen() {
             onAiBackendChange={setAiBackend}
           />
         </View>
+
+        <GlassPanel colors={colors} style={[styles.card, { marginTop: 12 }]}>
+          <Text style={{ color: colors.text, fontWeight: '700' }}>Notifications</Text>
+          <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 13, lineHeight: 18 }}>
+            {Platform.OS === 'web'
+              ? 'Browser notifications (service worker). Requires keeping this tab open so JS can receive updates.'
+              : 'Uses native notifications for local alerts (send/app-triggered).'}
+          </Text>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+            <Text style={{ color: colors.text, fontWeight: '700' }}>Enabled</Text>
+            <Switch
+              value={enabled}
+              onValueChange={(next) => {
+                void (async () => {
+                  if (notifBusy) return;
+                  setNotifBusy(true);
+                  try {
+                    if (next) {
+                      const ok = await requestEnable();
+                      if (!ok) await disable();
+                    } else {
+                      await disable();
+                    }
+                  } finally {
+                    setNotifBusy(false);
+                  }
+                })();
+              }}
+              disabled={!supported || notifBusy}
+            />
+          </View>
+
+          <Text style={{ color: colors.textMuted, marginTop: 8, fontSize: 12 }}>
+            Status: {supported ? permission : 'Not supported'} {supported ? (enabled ? '· on' : '· off') : ''}
+          </Text>
+        </GlassPanel>
 
         {isFourSomeAuthConfigured() ? (
           <GlassPanel colors={colors} style={[styles.card, { marginTop: 12 }]}>

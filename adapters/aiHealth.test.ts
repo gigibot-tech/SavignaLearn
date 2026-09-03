@@ -80,6 +80,17 @@ describe('AI connection tests', () => {
     expect(preferredLiveBackend(checks, 'ido')).toBe('ido');
   });
 
+  it('prefers iDO when signed in even if OpenAI is also up', () => {
+    const checks: ProbeResult[] = [
+      down('onprem', 'On-prem', 'URL not set'),
+      up('openai', 'OpenAI'),
+      up('ido', 'iDO'),
+      up('demo', 'Demo'),
+    ];
+    expect(preferredLiveBackend(checks, 'demo')).toBe('openai');
+    expect(preferredLiveBackend(checks, 'demo', { preferIdo: true })).toBe('ido');
+  });
+
   it('requires a fourSome session before enabling the fourSome chip', () => {
     const report = {
       checkedAt: new Date().toISOString(),

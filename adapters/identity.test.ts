@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeIdentitySessions } from './identity';
+import { chatActorIds, chatPersistenceUserId, isChatSelf, mergeIdentitySessions } from './identity';
 
 describe('mixed fourSome + iDO identity', () => {
   it('requires at least one provider session', () => {
@@ -25,5 +25,9 @@ describe('mixed fourSome + iDO identity', () => {
     expect(user?.fourSomeUserId).toBe('16e1c5d7-2908-44be-b53a-b7c0f0a00001');
     expect(user?.idoUserId).toBe('ido-1');
     expect(user?.email).toBe('a@fs.test');
+    expect(chatPersistenceUserId(user!)).toBe('ido-1');
+    expect(chatActorIds(user!)).toEqual(['ido-1', '16e1c5d7-2908-44be-b53a-b7c0f0a00001']);
+    expect(isChatSelf(user, 'ido-1')).toBe(true);
+    expect(isChatSelf(user, '16e1c5d7-2908-44be-b53a-b7c0f0a00001')).toBe(true);
   });
 });

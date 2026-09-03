@@ -14,6 +14,7 @@ import {
   saveFourSomeUserId,
   type AiBackendId,
 } from '@/adapters/chat';
+import { createVocabularyCardPort, memoryLearningItems } from '@/adapters/vocabulary';
 import { createFriendsRepository, usernameFromUser, memoryFriends } from '@/adapters/friends';
 import {
   applyFourSomeSession,
@@ -25,8 +26,10 @@ import {
 } from '@/adapters/aiHealth';
 import { getFourSomeEmail } from '@/adapters/fourSomeAuth';
 import { getIdoEmail, probeIdoAssist } from '@/adapters/idoAi';
-import { onWebGemmaStatus, preloadWebGemma, probeWebGemma } from '@/adapters/webGemma';
+import { onWebGemmaStatus, probeWebGemma } from '@/adapters/webGemma';
 import { createAuthPort } from '@/adapters/supabase';
+import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
+import { authStorage } from '@/adapters/authStorage';
 import {
   createTranslationEngine,
   InMemoryChatHistoryStore,
@@ -40,7 +43,9 @@ import type {
   FriendsRepository,
   TokenizerPort,
   TranslationEngine,
+  VocabularyCardPort,
   WordTapPort,
+  LearningItemRepository,
 } from '@/ports/ports';
 
 function buildServices(aiBackend: AiBackendId, fourSomeUserId: string | null) {
@@ -53,7 +58,9 @@ function buildServices(aiBackend: AiBackendId, fourSomeUserId: string | null) {
     translation: createTranslationEngine({ completion }),
     tokenizer: defaultTokenizer,
     wordTap: noOpWordTap,
-    historyStore: new InMemoryChatHistoryStore(),
+    vocabularyCards: createVocabularyCardPort(completion),
+    learningItems: memoryLearningItems,
+    historyStore: new InMemoryChatHistoryStore(authStorage),
     friends: createFriendsRepository(),
   };
 }
@@ -65,6 +72,8 @@ export interface AppServices {
   completion: ChatCompletionPort;
   tokenizer: TokenizerPort;
   wordTap: WordTapPort;
+  vocabularyCards: VocabularyCardPort;
+  learningItems: LearningItemRepository;
   historyStore: ChatHistoryStore;
   friends: FriendsRepository;
   aiBackend: AiBackendId;
@@ -112,7 +121,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const rebuild = useCallback((backend: AiBackendId, userId: string | null) => {
     setCore((prev) => {
       const next = buildServices(backend, userId);
-      return { ...next, auth: prev.auth, chat: prev.chat, historyStore: prev.historyStore, friends: prev.friends };
+      return { ...next, auth: prev.auth, chat: prev.chat, historyStore: prev.historyStore, friends: prev.friends, learningItems: prev.learningItems };
     });
   }, []);
 
@@ -190,7 +199,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ready || !user) return;
-    void preloadWebGemma();
+    // Chat first-paint is local KV. Do not preload Transformers.js (Metro 500) on login.
     return onWebGemmaStatus(() => {
       setHealth((prev) => {
         if (!prev) return prev;
@@ -204,12 +213,14 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!health || healthChecking) return;
-    const next = preferredLiveBackend(health.checks, aiBackend);
+    const next = preferredLiveBackend(health.checks, aiBackend, {
+      preferIdo: Boolean(user?.idoUserId),
+    });
     if (next === aiBackend) return;
     setAiBackendState(next);
     void saveAiBackend(next);
     rebuild(next, fourSomeUserId);
-  }, [aiBackend, fourSomeUserId, health, healthChecking, rebuild]);
+  }, [aiBackend, fourSomeUserId, health, healthChecking, rebuild, user?.idoUserId]);
 
   useEffect(() => {
     void Promise.all([loadAiBackend(), loadFourSomeUserId()]).then(([storedBackend, storedUser]) => {
@@ -270,17 +281,24 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
-    const handle = user.id;
+    const chatUserId = chatPersistenceUserId(user);
+    const actorIds = chatActorIds(user);
     const chat = core.chat;
     void (async () => {
       await memoryFriends.registerProfile({
-        id: handle,
+        id: user.id,
         username: usernameFromUser(user),
         displayName: user.displayName ?? usernameFromUser(user),
         email: user.email ?? '',
       });
-      memoryFriends.seedForViewer(handle, { id: handle, email: user.email });
-      await ensureLearningBotChat(chat, handle);
+      memoryFriends.seedForViewer(user.id, { id: user.id, email: user.email });
+      const history = core.historyStore as { hydrateForUser?: (userId: string) => Promise<void> };
+      if (typeof history.hydrateForUser === 'function') {
+        for (const id of actorIds) {
+          await history.hydrateForUser(id);
+        }
+      }
+      await ensureLearningBotChat(chat, chatUserId, actorIds);
       bumpFriends();
     })();
   }, [user, bumpFriends, core.chat]);

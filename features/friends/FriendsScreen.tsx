@@ -15,6 +15,7 @@ import {
   type FriendRow,
 } from '@/domain/friends';
 import { currentFriendShareUrl, findOrCreateDirectChat, usernameFromUser } from '@/adapters/friends';
+import { chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
@@ -72,12 +73,14 @@ export function FriendsScreen() {
     }
     setBusy(true);
     try {
+      await refresh();
       await friends.request(user.id, identifier);
       setQuery('');
       bumpFriends();
       await refresh();
     } catch (caught) {
       setModalError(friendRequestErrorMessage(errorFromCaught(caught)));
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -94,7 +97,7 @@ export function FriendsScreen() {
 
   const openChat = async (row: FriendRow) => {
     if (!user || row.inconsistent) return;
-    const conv = await findOrCreateDirectChat(chat, { id: user.id }, {
+    const conv = await findOrCreateDirectChat(chat, { id: chatPersistenceUserId(user) }, {
       id: row.userId,
       username: row.username,
       displayName: row.displayName,

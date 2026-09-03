@@ -3,7 +3,7 @@
  * LONG-TERM: WordTapPort only — never call VocabularyCardPort from here.
  */
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -22,14 +22,29 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { hasInterlinearFormat, LEARNING_BOT_DISPLAY_NAME, parseInterlinear, receiptMark } from '@/domain';
-import type { DisplayLine, ReceiptStatus } from '@/domain/chat';
+import {
+  hasInterlinearFormat,
+  joinOriginalsFromSelection,
+  LEARNING_BOT_DISPLAY_NAME,
+  parseInterlinear,
+  receiptMark,
+} from '@/domain';
+import type { DisplayLine, ReceiptStatus, TranslationMismatchReason } from '@/domain/chat';
+import { translationRetryWhy } from '@/domain/chat';
 import type { LearningSource } from '@/domain/learning';
 import type { TokenizerPort, WordTapPort } from '@/ports/ports';
 import { AI_BACKENDS, type AiBackendId } from '@/adapters/chat';
 import { isBackendSelectable, type AiHealthReport } from '@/adapters/aiHealth';
 import { Colors, gradients, tokens, type ThemeColors } from '@/constants/Colors';
 import { shouldKeepLoggedIn } from '@/adapters/authStorage';
+import {
+  ChatMediaImage,
+  ComposerMediaButtons,
+  StickerTray,
+  type OutgoingMedia,
+} from './composerMedia';
+import type { MessageMediaKind } from '@/domain/chat';
+import { TappableSentence, useWebClipboardJoin } from './TappableSentence';
 
 export function useThemeColors(scheme: 'light' | 'dark' | null | undefined): ThemeColors {
   return scheme === 'dark' ? Colors.dark : Colors.light;
@@ -261,17 +276,37 @@ export function InterlinearBlock({
   text,
   colors,
   onTokenPress,
+  onAccent,
 }: {
   text: string;
   colors: ThemeColors;
   onTokenPress?: (token: string) => void;
+  onAccent?: boolean;
 }) {
+  const topColor = onAccent ? colors.onAccent : colors.text;
+  const hintColor = onAccent ? 'rgba(255,255,255,0.78)' : colors.textMuted;
+  const hostRef = useRef<View>(null);
+  const transform = useCallback(
+    (selected: string) =>
+      joinOriginalsFromSelection(
+        selected,
+        parseInterlinear(text).map((segment) => segment.original)
+      ),
+    [text]
+  );
+  useWebClipboardJoin(hostRef, transform);
   if (!hasInterlinearFormat(text)) {
-    return <Text style={[styles.learningText, { color: colors.text }]}>{text}</Text>;
+    return (
+      <Text selectable style={[styles.learningText, { color: topColor }]}>
+        {text}
+      </Text>
+    );
   }
   const segments = parseInterlinear(text);
+  const webSelect = Platform.OS === 'web' ? ({ userSelect: 'text' } as TextStyle) : null;
+  const webSkipSelect = Platform.OS === 'web' ? ({ userSelect: 'none' } as TextStyle) : null;
   return (
-    <View style={styles.interlinearRow}>
+    <View ref={hostRef} style={styles.interlinearRow}>
       {segments.map((segment, index) => (
         <Pressable
           key={`${segment.original}-${index}`}
@@ -281,11 +316,11 @@ export function InterlinearBlock({
           accessibilityRole="button"
           accessibilityLabel={segment.original}
         >
-          <Text style={[styles.learningText, { color: colors.text }]}>{segment.original}</Text>
+          <Text selectable style={[styles.learningText, { color: topColor }, webSelect]}>
+            {segment.original}
+          </Text>
           {segment.translation ? (
-            <Text style={[styles.nativeText, { color: colors.textMuted }]}>
-              {segment.translation}
-            </Text>
+            <Text style={[styles.nativeText, { color: hintColor }, webSkipSelect]}>{segment.translation}</Text>
           ) : null}
         </Pressable>
       ))}
@@ -321,21 +356,49 @@ export function MessageLines({
   return (
     <View style={styles.linesBlock}>
       {lines.map((line) => {
-        if (mode === 'birkenbihl' && line.birkenbihl) {
+        if (mode === 'birkenbihl') {
+          if (line.birkenbihl) {
+            return (
+              <InterlinearBlock
+                key={line.lineIndex}
+                text={line.birkenbihl}
+                colors={colors}
+                onAccent={onAccent}
+                onTokenPress={(token) => {
+                  void wordTap.onPress({
+                    token,
+                    sentence: line.sourceText,
+                    language,
+                    source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
+                  });
+                }}
+              />
+            );
+          }
+          const original = line.sourceText || line.learningText;
+          const parts = tokenizer.tokenize(original, language);
           return (
-            <InterlinearBlock
-              key={line.lineIndex}
-              text={line.birkenbihl}
-              colors={colors}
-              onTokenPress={(token) => {
-                void wordTap.onPress({
-                  token,
-                  sentence: line.sourceText,
-                  language,
-                  source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
-                });
-              }}
-            />
+            <View key={line.lineIndex} style={styles.linePair}>
+              <TappableSentence
+                text={original}
+                tokens={parts}
+                onTokenPress={(token) =>
+                  void wordTap.onPress({
+                    token,
+                    sentence: line.sourceText,
+                    language,
+                    source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
+                  })
+                }
+                style={[styles.learningText, { color: learningColor }]}
+              />
+              <Text
+                style={[styles.nativeText, { color: nativeColor, minHeight: 16 }]}
+                accessibilityLabel="Birkenbihl translation unavailable"
+              >
+                {' '}
+              </Text>
+            </View>
           );
         }
         const parts = tokenizer.tokenize(line.learningText, language);
@@ -346,38 +409,32 @@ export function MessageLines({
           <View key={line.lineIndex} style={styles.linePair}>
             {learningLang ? (
               <Text style={[styles.langTag, { color: nativeColor }]}>
-                {learningLang.toUpperCase()}
+                {(line.learningLangTag ?? learningLang).toUpperCase()}
               </Text>
             ) : null}
-            <View style={styles.tokenRow}>
-              {parts.map((token, idx) => (
-                <Pressable
-                  key={`${token}-${idx}`}
-                  onPress={() =>
-                    void wordTap.onPress({
-                      token,
-                      sentence: line.sourceText,
-                      language,
-                      source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
-                    })
-                  }
-                  hitSlop={10}
-                  style={styles.tokenHit}
-                  accessibilityRole="button"
-                  accessibilityLabel={token}
-                >
-                  <Text style={[styles.learningText, { color: learningColor }]}>{token}</Text>
-                </Pressable>
-              ))}
-            </View>
+            <TappableSentence
+              text={line.learningText}
+              tokens={parts}
+              onTokenPress={(token) =>
+                void wordTap.onPress({
+                  token,
+                  sentence: line.sourceText,
+                  language,
+                  source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
+                })
+              }
+              style={[styles.learningText, { color: learningColor }]}
+            />
             {showNative ? (
               <>
                 {nativeLang ? (
                   <Text style={[styles.langTag, { color: nativeColor }]}>
-                    {nativeLang.toUpperCase()}
+                    {(line.nativeLangTag ?? nativeLang).toUpperCase()}
                   </Text>
                 ) : null}
-                <Text style={[styles.nativeText, { color: nativeColor }]}>{line.nativeText}</Text>
+                <Text selectable style={[styles.nativeText, { color: nativeColor }]}>
+                  {line.nativeText}
+                </Text>
               </>
             ) : null}
           </View>
@@ -404,6 +461,13 @@ export function MessageBubble({
   errorCopy,
   nativeLang,
   learningLang,
+  imageUrls,
+  mediaKind,
+  onRetryBirkenbihl,
+  birkenbihlBusy,
+  onRetryTranslation,
+  translationRetryReason,
+  translationRetryBusy,
 }: {
   mine: boolean;
   kind: 'user' | 'ai' | 'system';
@@ -421,6 +485,13 @@ export function MessageBubble({
   errorCopy?: string;
   nativeLang?: string;
   learningLang?: string;
+  imageUrls?: string[];
+  mediaKind?: MessageMediaKind;
+  onRetryBirkenbihl?: () => void;
+  birkenbihlBusy?: boolean;
+  onRetryTranslation?: () => void;
+  translationRetryReason?: TranslationMismatchReason | null;
+  translationRetryBusy?: boolean;
 }) {
   if (kind === 'system') {
     return (
@@ -431,24 +502,97 @@ export function MessageBubble({
   }
 
   const alignSelf = mine ? 'flex-end' : 'flex-start';
-  const body = (
-    <MessageLines
-      lines={lines}
-      mode={mode}
-      language={language}
-      tokenizer={tokenizer}
-      wordTap={wordTap}
-      source={{
-        kind: 'chat',
-        conversationId: source.conversationId,
-        messageId: source.messageId,
-        lineIndex: 0,
-      }}
-      colors={colors}
-      onAccent={mine && kind === 'user' && !failed}
-      nativeLang={nativeLang}
-      learningLang={learningLang}
-    />
+  const mediaUrls = imageUrls?.filter(Boolean) ?? [];
+  const isSticker = mediaKind === 'sticker';
+  const captionLines = mediaUrls.length ? [] : lines;
+  const mediaBlock =
+    mediaUrls.length > 0 ? (
+      <View style={styles.mediaBlock}>
+        {mediaUrls.map((url) => (
+          <ChatMediaImage
+            key={url}
+            url={url}
+            sticker={isSticker}
+            accessibilityLabel={captionLines[0]?.sourceText || (isSticker ? 'Sticker' : 'Photo')}
+          />
+        ))}
+      </View>
+    ) : null;
+  const body =
+    captionLines.length === 0 ? null : (
+      <MessageLines
+        lines={captionLines}
+        mode={mediaUrls.length ? 'lines' : mode}
+        language={language}
+        tokenizer={tokenizer}
+        wordTap={wordTap}
+        source={{
+          kind: 'chat',
+          conversationId: source.conversationId,
+          messageId: source.messageId,
+          lineIndex: 0,
+        }}
+        colors={colors}
+        onAccent={mine && kind === 'user' && !failed}
+        nativeLang={nativeLang}
+        learningLang={learningLang}
+      />
+    );
+  const missingBirken = lines.some((line) => !line.birkenbihl);
+  const showTranslationRetry =
+    Boolean(onRetryTranslation && translationRetryReason && !isSticker && !failed);
+  const retryTint = mine && kind === 'user' && !failed ? 'rgba(255,255,255,0.92)' : colors.accent;
+  const translationRetry = showTranslationRetry ? (
+    <Pressable
+      onPress={onRetryTranslation}
+      disabled={translationRetryBusy}
+      accessibilityRole="button"
+      accessibilityLabel={`Retry, ${translationRetryWhy(translationRetryReason!)}`}
+      accessibilityState={{ disabled: Boolean(translationRetryBusy), busy: Boolean(translationRetryBusy) }}
+      style={styles.retryHit}
+    >
+      <Ionicons name="refresh" size={14} color={retryTint} />
+      <Text style={[styles.retryLabel, { color: retryTint }]}>
+        {translationRetryBusy ? 'Retrying…' : 'Retry'}
+      </Text>
+      {translationRetryReason && !translationRetryBusy ? (
+        <Text style={[styles.retryWhy, { color: retryTint }]}>
+          {translationRetryWhy(translationRetryReason)}
+        </Text>
+      ) : null}
+    </Pressable>
+  ) : null;
+  const birkenRetry =
+    mode === 'birkenbihl' &&
+    onRetryBirkenbihl &&
+    !isSticker &&
+    !showTranslationRetry ? (
+      <Pressable
+        onPress={onRetryBirkenbihl}
+        disabled={birkenbihlBusy}
+        accessibilityRole="button"
+        accessibilityLabel={missingBirken ? 'Retry Birkenbihl' : 'Recalculate Birkenbihl'}
+        accessibilityState={{ disabled: Boolean(birkenbihlBusy), busy: Boolean(birkenbihlBusy) }}
+        style={{ marginTop: 8, opacity: birkenbihlBusy ? 0.6 : 1 }}
+      >
+        <Text
+          style={{
+            color: retryTint,
+            fontWeight: '700',
+            fontSize: 12,
+          }}
+        >
+          {birkenbihlBusy ? 'Recalculating…' : missingBirken ? 'Retry Birkenbihl' : 'Recalculate Birkenbihl'}
+        </Text>
+      </Pressable>
+    ) : null;
+  const inner = (
+    <>
+      {mediaBlock}
+      {body}
+      {translationRetry}
+      {birkenRetry}
+    </>
   );
 
   if (mine && kind === 'user') {
@@ -460,7 +604,7 @@ export function MessageBubble({
           end={{ x: 1, y: 1 }}
           style={[styles.bubble, styles.bubbleMine, failed && styles.bubbleFailed]}
         >
-          {body}
+          {inner}
           {receipt && !failed ? (
             <Text style={[styles.receipt, { color: 'rgba(255,255,255,0.85)' }]} accessibilityLabel={receipt}>
               {receiptGlyph(receipt)}
@@ -494,7 +638,7 @@ export function MessageBubble({
           {streaming ? <ActivityIndicator size="small" color={colors.accent} /> : null}
         </View>
       ) : null}
-      {body}
+      {inner}
       {failed ? (
         <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry send">
           <Text style={{ color: colors.danger, marginTop: 6, fontWeight: '600' }}>
@@ -603,17 +747,22 @@ function LangPickerModal({
 export function Composer({
   colors,
   onSend,
+  onSendImage,
   replyPreview,
   onCancelReply,
   nativeLang,
+  learningLang,
 }: {
   colors: ThemeColors;
   onSend: (text: string) => void;
+  onSendImage?: (media: OutgoingMedia) => void;
   replyPreview?: string;
   onCancelReply?: () => void;
   nativeLang: string;
+  learningLang?: string;
 }) {
   const [text, setText] = useState('');
+  const [trayOpen, setTrayOpen] = useState(false);
   const draft = useRef('');
   const areaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -632,8 +781,15 @@ export function Composer({
     onSend(value);
   };
 
+  const sendMedia = (media: OutgoingMedia) => {
+    setTrayOpen(false);
+    onSendImage?.(media);
+  };
+
   const canSend = (draft.current.trim() || text.trim()).length > 0;
-  const placeholder = `Message in ${languageLabel(nativeLang)}…`;
+  const placeholder = learningLang
+    ? `Message in ${languageLabel(nativeLang)} (learning ${languageLabel(learningLang)})…`
+    : `Message in ${languageLabel(nativeLang)}…`;
   const sendControl = (
     <LinearGradient colors={[...gradients.cta]} style={[styles.sendBtn, { pointerEvents: 'none' }]}>
       <Ionicons name="send" size={18} color="#fff" />
@@ -652,7 +808,16 @@ export function Composer({
           </Pressable>
         </View>
       ) : null}
+      {trayOpen && onSendImage ? <StickerTray colors={colors} onPick={sendMedia} /> : null}
       <View style={styles.composerRow}>
+        {onSendImage ? (
+          <ComposerMediaButtons
+            colors={colors}
+            trayOpen={trayOpen}
+            onToggleTray={() => setTrayOpen((open) => !open)}
+            onPickImage={sendMedia}
+          />
+        ) : null}
         {Platform.OS === 'web' ? (
           <textarea
             ref={areaRef}
@@ -778,6 +943,8 @@ export function AiConnectionPanel({
 }) {
   const server = healthCheck(health, 'server');
   const webgpu = healthCheck(health, 'webgpu');
+  const [hoveredDisabledDetail, setHoveredDisabledDetail] = useState<string | null>(null);
+  const isWeb = Platform.OS === 'web';
   return (
     <View style={{ marginBottom: 4 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -822,6 +989,16 @@ export function AiConnectionPanel({
             const selected = aiBackend === item.id;
             const detail = probe?.detail ?? (online ? item.hint : 'No connection');
             const shortDetail = detail.split(' · ')[0];
+            const webHoverProps =
+              isWeb
+                ? ({
+                    onMouseEnter: () => {
+                      // Only show the "disabled" reason when the backend is actually off.
+                      setHoveredDisabledDetail(online ? null : detail);
+                    },
+                    onMouseLeave: () => setHoveredDisabledDetail(null),
+                  } as any)
+                : {};
             return (
               <Pressable
                 key={item.id}
@@ -829,7 +1006,7 @@ export function AiConnectionPanel({
                   if (!online) return;
                   onAiBackendChange(item.id);
                 }}
-                disabled={!online}
+                {...webHoverProps}
                 style={[
                   styles.backendTile,
                   {
@@ -862,6 +1039,13 @@ export function AiConnectionPanel({
           })}
         </View>
       )}
+
+      {isWeb && !checking && hoveredDisabledDetail ? (
+        <Text style={{ color: colors.danger, marginTop: 8, fontSize: 12, lineHeight: 16 }}>
+          {hoveredDisabledDetail}
+        </Text>
+      ) : null}
+
       <Text style={{ color: colors.textMuted, marginTop: 8, fontSize: 12, lineHeight: 16 }}>
         fourSome uses on-prem first, then OpenAI. Pick On-prem or OpenAI to force one.
       </Text>
@@ -940,6 +1124,8 @@ export type ThreadChatSettingsProps = {
   aiBackend: AiBackendId;
   onAiBackendChange: (id: AiBackendId) => void;
   health: AiHealthReport | null;
+  onRecalculateBirkenbihl?: () => void;
+  birkenbihlBusy?: boolean;
 };
 
 /** Compact this-chat controls for L/XL thread headers — not the app Settings page. */
@@ -959,8 +1145,12 @@ export function ThreadInlineChatSettings({
   aiBackend,
   onAiBackendChange,
   health,
+  onRecalculateBirkenbihl,
+  birkenbihlBusy,
 }: ThreadChatSettingsProps) {
   const [picker, setPicker] = useState<LangPickerKind>(null);
+  const [hoveredDisabledDetail, setHoveredDisabledDetail] = useState<string | null>(null);
+  const isWeb = Platform.OS === 'web';
   const chipBorder = (active: boolean) => ({
     borderColor: active ? colors.accent : colors.border,
     backgroundColor: active ? colors.accentSoft : colors.background,
@@ -976,6 +1166,14 @@ export function ThreadInlineChatSettings({
           const probe = healthCheck(health, item.id);
           const online = isBackendSelectable(item.id, health);
           const selected = aiBackend === item.id;
+          const detail = probe?.detail ?? (online ? item.hint : 'No connection');
+          const webHoverProps =
+            isWeb
+              ? ({
+                  onMouseEnter: () => setHoveredDisabledDetail(online ? null : detail),
+                  onMouseLeave: () => setHoveredDisabledDetail(null),
+                } as any)
+              : {};
           return (
             <Pressable
               key={item.id}
@@ -983,11 +1181,11 @@ export function ThreadInlineChatSettings({
                 if (!online) return;
                 onAiBackendChange(item.id);
               }}
-              disabled={!online}
+              {...webHoverProps}
               style={[inlineStyles.chip, chipBorder(selected), { opacity: online ? 1 : 0.45 }]}
               accessibilityRole="button"
               accessibilityState={{ selected, disabled: !online }}
-              accessibilityLabel={`${item.label} backend, ${online ? 'online' : 'offline'}`}
+              accessibilityLabel={`${item.label} backend, ${online ? 'online' : 'offline'}, ${detail}`}
             >
               <StatusDot ok={Boolean(probe?.ok) || item.id === 'demo'} colors={colors} />
               <Text
@@ -1000,6 +1198,20 @@ export function ThreadInlineChatSettings({
           );
         })}
       </View>
+      {isWeb && hoveredDisabledDetail ? (
+        <Text
+          style={{
+            color: colors.danger,
+            fontSize: 11,
+            lineHeight: 14,
+            marginTop: 4,
+            paddingHorizontal: 2,
+          }}
+          numberOfLines={3}
+        >
+          {hoveredDisabledDetail}
+        </Text>
+      ) : null}
       <View style={inlineStyles.row}>
         <Pressable
           onPress={() => setPicker('native')}
@@ -1067,6 +1279,7 @@ export function ThreadInlineChatSettings({
           onPress={() => onModeChange('lines')}
           style={[inlineStyles.chip, chipBorder(mode === 'lines')]}
           accessibilityRole="button"
+          accessibilityLabel="Standard display mode"
           accessibilityState={{ selected: mode === 'lines' }}
         >
           <Text style={{ color: colors.text, fontWeight: mode === 'lines' ? '800' : '600', fontSize: 12 }}>
@@ -1077,12 +1290,27 @@ export function ThreadInlineChatSettings({
           onPress={() => onModeChange('birkenbihl')}
           style={[inlineStyles.chip, chipBorder(mode === 'birkenbihl')]}
           accessibilityRole="button"
+          accessibilityLabel="Birkenbihl display mode"
           accessibilityState={{ selected: mode === 'birkenbihl' }}
         >
           <Text style={{ color: colors.text, fontWeight: mode === 'birkenbihl' ? '800' : '600', fontSize: 12 }}>
             Birkenbihl
           </Text>
         </Pressable>
+        {mode === 'birkenbihl' && onRecalculateBirkenbihl ? (
+          <Pressable
+            onPress={onRecalculateBirkenbihl}
+            disabled={birkenbihlBusy}
+            style={[inlineStyles.chip, chipBorder(false), { opacity: birkenbihlBusy ? 0.55 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Recalculate Birkenbihl"
+            accessibilityState={{ disabled: Boolean(birkenbihlBusy), busy: Boolean(birkenbihlBusy) }}
+          >
+            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 12 }}>
+              {birkenbihlBusy ? 'Recalculating…' : 'Recalculate Birkenbihl'}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
       <ChatLangPickers
         picker={picker}
@@ -1129,6 +1357,8 @@ export function ChatSettingsSheet({
   health,
   healthChecking,
   onRetryHealth,
+  onRecalculateBirkenbihl,
+  birkenbihlBusy,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -1150,6 +1380,8 @@ export function ChatSettingsSheet({
   health: AiHealthReport | null;
   healthChecking: boolean;
   onRetryHealth: () => void;
+  onRecalculateBirkenbihl?: () => void;
+  birkenbihlBusy?: boolean;
 }) {
   const [picker, setPicker] = useState<'native' | 'learning' | 'partner' | null>(null);
   if (!visible) return null;
@@ -1230,6 +1462,7 @@ export function ChatSettingsSheet({
               onPress={() => onModeChange('lines')}
               style={[styles.modeChip, mode === 'lines' && { backgroundColor: colors.accentSoft }]}
               accessibilityRole="button"
+              accessibilityLabel="Standard display mode"
               accessibilityState={{ selected: mode === 'lines' }}
             >
               <Text style={{ color: colors.text, fontWeight: mode === 'lines' ? '700' : '500' }}>Standard</Text>
@@ -1238,6 +1471,7 @@ export function ChatSettingsSheet({
               onPress={() => onModeChange('birkenbihl')}
               style={[styles.modeChip, mode === 'birkenbihl' && { backgroundColor: colors.accentSoft }]}
               accessibilityRole="button"
+              accessibilityLabel="Birkenbihl display mode"
               accessibilityState={{ selected: mode === 'birkenbihl' }}
             >
               <Text style={{ color: colors.text, fontWeight: mode === 'birkenbihl' ? '700' : '500' }}>
@@ -1245,6 +1479,29 @@ export function ChatSettingsSheet({
               </Text>
             </Pressable>
           </View>
+          {mode === 'birkenbihl' && onRecalculateBirkenbihl ? (
+            <Pressable
+              onPress={onRecalculateBirkenbihl}
+              disabled={birkenbihlBusy}
+              style={[
+                styles.modeChip,
+                {
+                  marginHorizontal: 16,
+                  marginTop: 8,
+                  backgroundColor: colors.accentSoft,
+                  opacity: birkenbihlBusy ? 0.55 : 1,
+                  alignSelf: 'flex-start',
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Recalculate Birkenbihl"
+              accessibilityState={{ disabled: Boolean(birkenbihlBusy), busy: Boolean(birkenbihlBusy) }}
+            >
+              <Text style={{ color: colors.text, fontWeight: '700' }}>
+                {birkenbihlBusy ? 'Recalculating…' : 'Recalculate Birkenbihl'}
+              </Text>
+            </Pressable>
+          ) : null}
 
           {isBotChat ? (
             <>
@@ -1438,6 +1695,7 @@ export function ChatsEmptyHome({
   onNewChat,
   onSignOut,
   copied,
+  vocabRail,
 }: {
   colors: ThemeColors;
   username: string;
@@ -1447,6 +1705,7 @@ export function ChatsEmptyHome({
   onNewChat: () => void;
   onSignOut: () => void;
   copied: boolean;
+  vocabRail?: React.ReactNode;
 }) {
   return (
     <View style={emptyStyles.root}>
@@ -1519,6 +1778,7 @@ export function ChatsEmptyHome({
             </View>
           </GlassPanel>
         </Pressable>
+        {vocabRail ? <View style={emptyStyles.vocabSlot}>{vocabRail}</View> : null}
       </View>
 
       <View style={emptyStyles.footer}>
@@ -1565,7 +1825,7 @@ export function AuthHero({
         SavignaLearn
       </Text>
       <Text style={[emptyStyles.authSub, { color: colors.textMuted }]}>
-        Sign in with your fourSome or iDO account. Local demo is learner@savigna.local / demo.
+        Sign in with your fourSome or iDO account. Demo iDO: learner@savigna.local / demo.
       </Text>
       <TextInput
         value={email}
@@ -1733,6 +1993,7 @@ const emptyStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  vocabSlot: { marginTop: 20 },
   footer: { paddingHorizontal: 24, paddingBottom: 16, paddingTop: 8 },
   authRoot: {
     flex: 1,
@@ -1777,13 +2038,23 @@ const emptyStyles = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  mediaBlock: { gap: 8 },
   linesBlock: { gap: 8 },
   linePair: { gap: 2 },
-  tokenRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 6, rowGap: 2 },
-  tokenHit: { justifyContent: 'center', paddingVertical: 2 },
   learningText: { fontSize: 16, fontWeight: '600', lineHeight: 22 },
   nativeText: { fontSize: 13, lineHeight: 18 },
   langTag: { fontSize: 10, fontWeight: '700', letterSpacing: 0.6, marginTop: 2 },
+  retryHit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 4,
+    minHeight: 32,
+  },
+  retryLabel: { fontWeight: '800', fontSize: 13 },
+  retryWhy: { fontWeight: '600', fontSize: 11, opacity: 0.9 },
   interlinearRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   interlinearSegment: { marginRight: 4 },
   bubbleOuter: { maxWidth: '88%', marginVertical: 5 },

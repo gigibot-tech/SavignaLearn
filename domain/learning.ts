@@ -3,8 +3,9 @@
  * LONG-TERM: LearningItem field names match Gigolingo Word; chat never imports features/media.
  */
 
+import { normalizeVocabularyTapKey } from '@/gigolingo-shared/vocabularyTapState';
 import type { LanguageCode } from './chat';
-import { toGigolingoLangKey } from './chat';
+import { normalizeLanguageCode, toGigolingoLangKey } from './chat';
 import type { MessageLine } from './chat';
 
 export type LearningSource =
@@ -95,6 +96,30 @@ export function createLearningItem(
     reading: input.reading ?? '',
     source: input.source,
   };
+}
+
+function languageIdentity(language?: string): string {
+  if (!language || !language.trim()) return '';
+  return normalizeLanguageCode(language);
+}
+
+/** Same word+lang+source → same card. Uses Gigolingo `normalizeVocabularyTapKey`. */
+export function learningItemIdentityKey(
+  word: string,
+  language: string | undefined,
+  source: LearningSource
+): string {
+  return `${normalizeVocabularyTapKey(word)}|${languageIdentity(language)}|${learningSourceKey(source)}`;
+}
+
+export function findMatchingLearningItem(
+  items: readonly LearningItem[],
+  query: { word: string; language?: string; source: LearningSource }
+): LearningItem | undefined {
+  const key = learningItemIdentityKey(query.word, query.language, query.source);
+  return items.find(
+    (item) => learningItemIdentityKey(item.word, item.language, item.source) === key
+  );
 }
 
 /** Structural compatibility with Gigolingo Media Block/Line. */

@@ -218,6 +218,46 @@ describe('InMemoryFriendsRepository', () => {
     );
   });
 
+  it('delete removes the pair both directions', async () => {
+    const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
+    friends.seedForViewer(DEMO_LEARNER_ID, { id: DEMO_LEARNER_ID, email: 'learner@savigna.local' });
+    const ice = (await friends.listFor(DEMO_LEARNER_ID)).find(
+      (row) =>
+        row.status === 'accepted' &&
+        [row.requesterId, row.addresseeId].includes(ICESTORM_PROFILE_ID)
+    );
+    expect(ice).toBeTruthy();
+    await friends.remove(DEMO_LEARNER_ID, ice!.id);
+    expect(
+      (await friends.listFor(DEMO_LEARNER_ID)).some((row) =>
+        [row.requesterId, row.addresseeId].includes(ICESTORM_PROFILE_ID)
+      )
+    ).toBe(false);
+    expect(
+      (await friends.listFor(ICESTORM_PROFILE_ID)).some((row) =>
+        [row.requesterId, row.addresseeId].includes(DEMO_LEARNER_ID)
+      )
+    ).toBe(false);
+  });
+
+  it('decline deletes the request both ways and seed does not recreate it', async () => {
+    const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
+    friends.seedForViewer('me', { id: 'me', email: 'me@savigna.local' });
+    const alex = (await friends.listFor('me')).find(
+      (row) => row.status === 'pending' && row.requesterId === 'friend-alex'
+    );
+    expect(alex).toBeTruthy();
+    await friends.decline('me', alex!.id);
+    expect((await friends.listFor('me')).some((row) => row.id === alex!.id)).toBe(false);
+    expect((await friends.listFor('friend-alex')).some((row) => row.id === alex!.id)).toBe(false);
+    friends.seedForViewer('me', { id: 'me', email: 'me@savigna.local' });
+    expect(
+      (await friends.listFor('me')).some(
+        (row) => row.status === 'pending' && row.requesterId === 'friend-alex'
+      )
+    ).toBe(false);
+  });
+
   it('marks a deleted account inconsistent and delete does not recreate it', async () => {
     const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
     friends.seedForViewer('me', { id: 'me', email: 'me@savigna.local' });

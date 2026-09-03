@@ -7,6 +7,9 @@ import { LEARNING_BOT_USER_ID } from '@/domain/chat';
 import {
   DEMO_LEARNER_EMAIL,
   DEMO_LEARNER_ID,
+  DEMO_LEARNER_IDO_USER_ID,
+  IDO_LEARN_EMAIL,
+  IDO_LEARN_USER_ID,
   FriendRequestFailed,
   FRIEND_SHARE_ORIGIN,
   ICESTORM_EMAIL,
@@ -193,7 +196,8 @@ export class InMemoryFriendsRepository implements FriendsRepository {
   async decline(viewerId: string, friendshipId: string): Promise<void> {
     const row = this.friendships.find((item) => item.id === friendshipId);
     if (!row || row.addresseeId !== viewerId) throw new FriendRequestFailed('not_found');
-    row.status = 'declined';
+    this.deletedPairs.add(friendshipPairKey(row.requesterId, row.addresseeId));
+    this.friendships = this.friendships.filter((item) => item.id !== friendshipId);
   }
 
   async remove(viewerId: string, friendshipId: string): Promise<void> {
@@ -287,6 +291,8 @@ export class InMemoryFriendsRepository implements FriendsRepository {
     const learnerProfile =
       this.profiles.get(DEMO_LEARNER_ID) ??
       this.profileByEmail(DEMO_LEARNER_EMAIL) ??
+      this.profiles.get(IDO_LEARN_USER_ID) ??
+      this.profileByEmail(IDO_LEARN_EMAIL) ??
       ({
         id: DEMO_LEARNER_ID,
         username: 'learner',
@@ -309,15 +315,18 @@ export class InMemoryFriendsRepository implements FriendsRepository {
     const viewerIsLearner = isDemoLearnerIdentity(identity);
     const viewerIsIce = isIcestormIdentity(identity);
     if (viewerIsLearner || viewerIsIce) {
-      const learnerId = learnerProfile.id;
-      const iceId = iceProfile.id;
-      seedMutualAccepted(
-        this.friendships,
-        learnerId,
-        iceId,
-        new Date().toISOString(),
-        this.deletedPairs
-      );
+      const iceId = viewerIsIce ? viewerId : iceProfile.id;
+      const learnerIds = new Set<string>([
+        learnerProfile.id,
+        DEMO_LEARNER_ID,
+        DEMO_LEARNER_IDO_USER_ID,
+        IDO_LEARN_USER_ID,
+      ]);
+      if (viewerIsLearner) learnerIds.add(viewerId);
+      const at = new Date().toISOString();
+      for (const learnerId of learnerIds) {
+        seedMutualAccepted(this.friendships, learnerId, iceId, at, this.deletedPairs);
+      }
     }
   }
 }

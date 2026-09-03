@@ -23,6 +23,23 @@ export function mergeIdentitySessions(input: {
   };
 }
 
+/** User id to store on iDO savigna_* rows (never the fourSome id). */
+export function chatPersistenceUserId(user: Pick<AuthUser, 'id' | 'idoUserId'>): string {
+  return user.idoUserId || user.id;
+}
+
+export function chatActorIds(user: Pick<AuthUser, 'id' | 'idoUserId'>): string[] {
+  return [...new Set([chatPersistenceUserId(user), user.id].filter(Boolean))];
+}
+
+export function isChatSelf(
+  user: Pick<AuthUser, 'id' | 'idoUserId'> | null | undefined,
+  actorId: string
+): boolean {
+  if (!user) return false;
+  return chatActorIds(user).includes(actorId);
+}
+
 export function identityFromSupabaseUser(user: {
   id: string;
   email?: string | null;

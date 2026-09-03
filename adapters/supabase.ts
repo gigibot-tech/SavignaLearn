@@ -12,7 +12,8 @@ import type {
   ReceiptStatus,
   SourceMessage,
 } from '@/domain/chat';
-import type { AuthPort, AuthUser, ChatRepository } from '@/ports/ports';
+import { conversationPreviewFor, mediaKindOf } from '@/domain/chat';
+import type { AuthPort, AuthUser, ChatContentCipher, ChatRepository } from '@/ports/ports';
 import { MixedAuthAdapter, isMixedIdentityConfigured } from '@/adapters/mixedAuth';
 import {
   authStorage,
@@ -157,7 +158,10 @@ type MessageRow = {
   author_id: string;
   source_lang: string;
   source_text: string;
+  enc_version?: number | null;
+  enc_alg?: string | null;
   lines: MessageLine[];
+  lines_cipher?: string | null;
   kind: SourceMessage['kind'];
   reply_to: string | null;
   edited_at: string | null;
@@ -166,15 +170,30 @@ type MessageRow = {
   created_at: string;
 };
 
-function rowToMessage(row: MessageRow): SourceMessage {
+async function rowToMessage(row: MessageRow, cipher: ChatContentCipher): Promise<SourceMessage> {
+  const sourceText = await cipher.open({
+    ciphertext: row.source_text,
+    encVersion: row.enc_version,
+    encAlg: row.enc_alg,
+  });
+  let lines = row.lines ?? [];
+  if (row.lines_cipher) {
+    const raw = await cipher.open({
+      ciphertext: row.lines_cipher,
+      encVersion: row.enc_version,
+      encAlg: row.enc_alg,
+    });
+    lines = JSON.parse(raw) as MessageLine[];
+  }
   return {
     id: row.id,
     conversationId: row.conversation_id,
     authorId: row.author_id,
     sourceLang: row.source_lang,
-    sourceText: row.source_text,
-    lines: row.lines ?? [],
+    sourceText,
+    lines,
     kind: row.kind,
+    mediaKind: mediaKindOf({ lines }),
     replyToId: row.reply_to ?? undefined,
     editedAt: row.edited_at ?? undefined,
     deletedAt: row.deleted_at ?? undefined,
@@ -183,9 +202,12 @@ function rowToMessage(row: MessageRow): SourceMessage {
   };
 }
 
-/** Realtime ChatRepository against savigna_* tables (ido-core project). */
+/** Realtime ChatRepository against savigna_* tables (iDO Auth project). */
 export class SupabaseChatRepository implements ChatRepository {
-  private client = getSupabaseClient();
+  constructor(
+    private readonly client: SupabaseClient,
+    private readonly cipher: ChatContentCipher
+  ) {}
 
   async listConversations(userId: string): Promise<Conversation[]> {
     const { data: parts, error } = await this.client
@@ -233,7 +255,10 @@ export class SupabaseChatRepository implements ChatRepository {
   }
 
   async getConversation(id: string): Promise<Conversation | null> {
-    const list = await this.listConversations((await this.client.auth.getUser()).data.user?.id ?? '');
+    const { data } = await this.client.auth.getUser();
+    const userId = data.user?.id ?? '';
+    if (!userId) return null;
+    const list = await this.listConversations(userId);
     return list.find((c) => c.id === id) ?? null;
   }
 
@@ -277,10 +302,15 @@ export class SupabaseChatRepository implements ChatRepository {
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
     if (error) throw error;
-    return (data ?? []).map((row) => rowToMessage(row as MessageRow));
+    return Promise.all((data ?? []).map((row) => rowToMessage(row as MessageRow, this.cipher)));
   }
 
   async appendMessage(message: SourceMessage): Promise<SourceMessage> {
+    const sealed = await this.cipher.seal(message.sourceText);
+    const encryptLines = this.cipher.alg !== 'none';
+    const sealedLines = encryptLines
+      ? await this.cipher.seal(JSON.stringify(message.lines))
+      : null;
     const { data, error } = await this.client
       .from('savigna_messages')
       .insert({
@@ -288,8 +318,11 @@ export class SupabaseChatRepository implements ChatRepository {
         conversation_id: message.conversationId,
         author_id: message.authorId,
         source_lang: message.sourceLang,
-        source_text: message.sourceText,
-        lines: message.lines,
+        source_text: sealed.ciphertext,
+        enc_version: sealed.encVersion,
+        enc_alg: sealed.encAlg,
+        lines: encryptLines ? [] : message.lines,
+        lines_cipher: sealedLines?.ciphertext ?? null,
         kind: message.kind,
         reply_to: message.replyToId ?? null,
         receipt: message.receipt,
@@ -302,12 +335,12 @@ export class SupabaseChatRepository implements ChatRepository {
     await this.client
       .from('savigna_conversations')
       .update({
-        last_message_preview: message.sourceText.split('\n')[0],
+        last_message_preview: conversationPreviewFor(message),
         updated_at: message.createdAt,
       })
       .eq('id', message.conversationId);
 
-    return rowToMessage(data as MessageRow);
+    return rowToMessage(data as MessageRow, this.cipher);
   }
 
   async updateReceipt(messageId: string, receipt: ReceiptStatus): Promise<void> {
@@ -320,13 +353,20 @@ export class SupabaseChatRepository implements ChatRepository {
 
   async saveTranslations(messageId: string, translations: LineTranslation[]): Promise<void> {
     if (translations.length === 0) return;
-    const rows = translations.map((t) => ({
-      message_id: messageId,
-      line_index: t.lineIndex,
-      target_lang: t.targetLang,
-      mode: t.mode,
-      text: t.text,
-    }));
+    const rows = await Promise.all(
+      translations.map(async (t) => {
+        const sealed = await this.cipher.seal(t.text);
+        return {
+          message_id: messageId,
+          line_index: t.lineIndex,
+          target_lang: t.targetLang,
+          mode: t.mode,
+          text: sealed.ciphertext,
+          enc_version: sealed.encVersion,
+          enc_alg: sealed.encAlg,
+        };
+      })
+    );
     const { error } = await this.client.from('savigna_line_translations').upsert(rows, {
       onConflict: 'message_id,line_index,target_lang,mode',
     });
@@ -339,12 +379,18 @@ export class SupabaseChatRepository implements ChatRepository {
       .select('*')
       .eq('message_id', messageId);
     if (error) throw error;
-    return (data ?? []).map((row) => ({
-      lineIndex: row.line_index as number,
-      targetLang: row.target_lang as string,
-      mode: row.mode as LineTranslation['mode'],
-      text: row.text as string,
-    }));
+    return Promise.all(
+      (data ?? []).map(async (row) => ({
+        lineIndex: row.line_index as number,
+        targetLang: row.target_lang as string,
+        mode: row.mode as LineTranslation['mode'],
+        text: await this.cipher.open({
+          ciphertext: row.text as string,
+          encVersion: row.enc_version as number | null,
+          encAlg: row.enc_alg as string | null,
+        }),
+      }))
+    );
   }
 
   async updateParticipants(

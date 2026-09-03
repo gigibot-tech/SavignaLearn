@@ -36,8 +36,8 @@ On Friends load (and when opening Add friend), each existing row is re-checked a
 
 ## Demo seed
 
-- Demo login (`learner@savigna.local` / `demo`) seeds Mira (accepted) and a request from Alex.
-- **learner@** and **icestormfroste@gmail.com** (`@icestormfroste`) are **mutual accepted friends** when both exist.
+- Demo login (`learner@savigna.local` / `demo`, or iDO `learn@savigna.local` / `learn`) seeds Mira (accepted) and a request from Alex.
+- **learner@ / learn@savigna.local** and **icestormfroste@gmail.com** (`@icestormfroste`) are **mutual accepted friends** when both exist.
 - Do not friend SavignasBoi.
 
 ## SavignasBoi for every user

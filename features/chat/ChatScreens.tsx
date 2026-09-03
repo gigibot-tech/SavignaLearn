@@ -4,6 +4,7 @@
 
 import { router, useLocalSearchParams, useRouter } from 'expo-router';
 import { learningBotHref, routeParam } from '@/adapters/postLogin';
+import { chatActorIds, chatPersistenceUserId, isChatSelf } from '@/adapters/identity';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
@@ -21,26 +22,44 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import {
   createLearnerViewpoint,
+  imageUrlsOf,
   isLearningBotConversation,
+  isMediaMessage,
   LEARNING_BOT_DISPLAY_NAME,
   LEARNING_BOT_USER_ID,
+  mediaKindOf,
   otherParticipantId,
   renderViewpoint,
+  shouldTranslateMessage,
+  sourceMessageFromImage,
   sourceMessageFromText,
+  mergeLineTranslations,
+  mergeTranslationMaps,
   toTranslationMode,
+  translationMismatch,
   type AsymmetricLanguageContext,
   type Conversation,
   type DisplayMode,
   type LineTranslation,
+  type TranslationMismatchReason,
   type SourceMessage,
 } from '@/domain';
-import { ensureLearningBotChat, labelForAiBackend, ResilientChatCompletionAdapter } from '@/adapters/chat';
+import { shouldAutoReplyFromSendInput } from '@/domain/chatAutoReply';
+import {
+  ensureLearningBotChat,
+  labelForAiBackend,
+  listInboxConversations,
+  ResilientChatCompletionAdapter,
+} from '@/adapters/chat';
 import { usernameFromUser } from '@/adapters/friends';
-import { processOutgoingTranslation, completeBilingualBotReply } from '@/adapters/translation';
-import type { WordTapPort } from '@/ports/ports';
+import { processOutgoingTranslation, completeBilingualBotReply, persistCompletedHistory, recalculateBirkenbihlForThread, retryBubbleTranslations } from '@/adapters/translation';
+import { loadConversationThread } from '@/adapters/chatPersistence';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from './AppProviders';
+import { useNotifications } from '@/features/notifications/NotificationProvider';
 import { useAppShell, useWideChatChrome } from '@/features/shell/AppShell';
+import { useVocabCardFromTap } from '@/features/vocabulary/CreateVocabCardModal';
+import { TippedVocabHome } from '@/features/vocabulary/vocabularyUi';
 import {
   ChatSettingsSheet,
   ChatsEmptyHome,
@@ -54,8 +73,8 @@ import {
   ThreadChromeHeader,
   ThreadInlineChatSettings,
   useThemeColors,
-  WordTapToast,
 } from './chatUi';
+import type { OutgoingMedia } from './composerMedia';
 
 function relativeTime(iso: string): string {
   const delta = Date.now() - new Date(iso).getTime();
@@ -67,8 +86,11 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function newMessageId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+function newMessageId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 /** Keep FlatList keys unique when merging optimistic + subscribed repo snapshots. */
@@ -100,10 +122,13 @@ export function InboxScreen() {
 
   const refresh = useCallback(async () => {
     if (!user) return;
-    await ensureLearningBotChat(chat, user.id);
-    const list = await chat.listConversations(user.id);
-    setItems(list);
-    setLoading(false);
+    const ids = chatActorIds(user);
+    try {
+      await ensureLearningBotChat(chat, chatPersistenceUserId(user), ids);
+      setItems(await listInboxConversations(chat, ids));
+    } finally {
+      setLoading(false);
+    }
   }, [chat, user]);
 
   useEffect(() => {
@@ -141,7 +166,7 @@ export function InboxScreen() {
 
   const openBot = async () => {
     if (!user) return;
-    const id = await ensureLearningBotChat(chat, user.id);
+    const id = await ensureLearningBotChat(chat, chatPersistenceUserId(user), chatActorIds(user));
     await refresh();
     nav.push(learningBotHref(id));
   };
@@ -170,6 +195,7 @@ export function InboxScreen() {
             router.replace('/');
             void auth.signOut();
           }}
+          vocabRail={<TippedVocabHome colors={colors} />}
         />
       </GradientScreen>
     );
@@ -189,6 +215,9 @@ export function InboxScreen() {
           <Text style={{ color: colors.textMuted, marginTop: 8, textAlign: 'center', maxWidth: 360 }}>
             Conversations stay in the sidebar — chat and friends only, no meetups.
           </Text>
+          <View style={{ alignSelf: 'stretch', width: '100%', maxWidth: 560, marginTop: 28 }}>
+            <TippedVocabHome colors={colors} />
+          </View>
         </View>
       </GradientScreen>
     );
@@ -270,9 +299,17 @@ export function ThreadScreen() {
     health,
     healthChecking,
     refreshHealth,
+    vocabularyCards,
+    learningItems,
   } = useServices();
   const { user } = useAuthState();
+  const chatUserId = user ? chatPersistenceUserId(user) : undefined;
+  const selfIds = useMemo(
+    () => (user ? chatActorIds(user) : []),
+    [user?.id, user?.idoUserId]
+  );
   const router = useRouter();
+  const { showNotification } = useNotifications();
   const wideChrome = useWideChatChrome();
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -286,10 +323,15 @@ export function ThreadScreen() {
   const [replyTo, setReplyTo] = useState<SourceMessage | null>(null);
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [tapToken, setTapToken] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [birkenBusy, setBirkenBusy] = useState(false);
+  const [translationRetryIds, setTranslationRetryIds] = useState<string[]>([]);
   const listRef = useRef<FlatList<SourceMessage>>(null);
   const inFlight = useRef(new Set<string>());
+  const translationsRef = useRef(translations);
+  translationsRef.current = translations;
+  const birkenInFlight = useRef(new Set<string>());
+  const translationRetryInFlight = useRef(new Set<string>());
 
   useEffect(() => {
     if (wideChrome) setSettingsOpen(false);
@@ -315,15 +357,12 @@ export function ThreadScreen() {
     return selected;
   }, [completion, aiBackend, messages, streamingId]);
 
-  const wordTap = useMemo<WordTapPort>(
-    () => ({
-      async onPress(request) {
-        setTapToken(request.token);
-        setTimeout(() => setTapToken(null), 1800);
-      },
-    }),
-    []
-  );
+  const { wordTap, modal: vocabModal } = useVocabCardFromTap({
+    userId: user?.id,
+    cards: vocabularyCards,
+    items: learningItems,
+    colors,
+  });
 
   const viewpoint = useMemo(() => {
     return createLearnerViewpoint({
@@ -333,6 +372,185 @@ export function ThreadScreen() {
     });
   }, [nativeLang, learningLang, mode]);
 
+  const asymmetricFor = useCallback(
+    (
+      msg: SourceMessage,
+      langs: { native: string; learning: string; partnerLearning: string }
+    ): AsymmetricLanguageContext | null => {
+      if (!user || !conversation) return null;
+      const mine = isChatSelf(user, msg.authorId);
+      const receiverId = mine
+        ? (otherParticipantId(conversation, selfIds) ?? LEARNING_BOT_USER_ID)
+        : (chatUserId ?? user.id);
+      return {
+        senderUserId: msg.authorId,
+        receiverUserId: receiverId,
+        senderLearningLang: mine ? langs.learning : langs.partnerLearning,
+        receiverLearningLang: mine ? langs.partnerLearning : langs.learning,
+        senderNativeLang: mine ? langs.native : langs.learning,
+        receiverNativeLang: mine ? langs.learning : langs.native,
+      };
+    },
+    [user, conversation, chatUserId, selfIds]
+  );
+
+  const retryTranslation = useCallback(
+    async (msg: SourceMessage, mismatchReason?: TranslationMismatchReason | null) => {
+      if (!user || !conversation) return;
+      if (!shouldTranslateMessage(msg)) return;
+      if (translationRetryInFlight.current.has(msg.id)) return;
+      translationRetryInFlight.current.add(msg.id);
+      setTranslationRetryIds([...translationRetryInFlight.current]);
+      const existing = translationsRef.current[msg.id] ?? [];
+      const sourceSnapshot = msg.sourceText;
+      try {
+        const messageForRetry =
+          isChatSelf(user, msg.authorId) ? { ...msg, sourceLang: nativeLang } : {
+            ...msg,
+            // SavignasBoi stores `sourceText` as `learning_text`; for mismatch logic we treat
+            // that as the viewer’s `learningLang`, not the model’s `detected_source_lang`.
+            sourceLang:
+              msg.authorId === LEARNING_BOT_USER_ID || msg.kind === 'ai' ? learningLang : msg.sourceLang,
+          };
+        const reason = mismatchReason ?? translationMismatch({
+          message: messageForRetry,
+          translations: existing,
+          viewpoint,
+        });
+        const asymmetric =
+          asymmetricFor(msg, {
+            native: nativeLang,
+            learning: learningLang,
+            partnerLearning: partnerLearningLang,
+          }) ?? {
+            senderUserId: msg.authorId,
+            receiverUserId: chatUserId ?? user.id,
+            senderLearningLang: learningLang,
+            receiverLearningLang: learningLang,
+            senderNativeLang: nativeLang,
+            receiverNativeLang: nativeLang,
+          };
+        const next = await retryBubbleTranslations({
+          message: messageForRetry,
+          existingTranslations: existing,
+          asymmetric,
+          mode: toTranslationMode(mode),
+          engine: translation,
+          historyStore,
+          completion: msg.kind === 'ai' || msg.authorId === LEARNING_BOT_USER_ID ? completion : undefined,
+          learningLang,
+          nativeLang,
+          mismatchReason: reason,
+        });
+        if (msg.sourceText !== sourceSnapshot) {
+          msg.sourceText = sourceSnapshot;
+        }
+        const merged = mergeLineTranslations(existing, next);
+        await chat.saveTranslations(msg.id, merged);
+        setTranslations((prev) => ({ ...prev, [msg.id]: mergeLineTranslations(prev[msg.id] ?? [], merged) }));
+      } catch {
+        // Keep source visible; Retry stays if the pair is still empty/mismatched.
+      } finally {
+        translationRetryInFlight.current.delete(msg.id);
+        setTranslationRetryIds([...translationRetryInFlight.current]);
+      }
+    },
+    [
+      user,
+      conversation,
+      asymmetricFor,
+      nativeLang,
+      learningLang,
+      partnerLearningLang,
+      mode,
+      translation,
+      historyStore,
+      completion,
+      chat,
+    ]
+  );
+
+  const runBirkenbihlRecalc = useCallback(
+    async (msgs: SourceMessage[], fillMissingOnly: boolean) => {
+      if (!user || !conversation) return;
+      const pending = (fillMissingOnly
+        ? msgs.filter((msg) => {
+            const rows = translationsRef.current[msg.id] ?? [];
+            return !rows.some((row) => row.mode === 'birkenbihl' && row.text.trim().length > 0);
+          })
+        : msgs
+      ).filter((msg) => shouldTranslateMessage(msg) && !birkenInFlight.current.has(msg.id));
+      if (pending.length === 0) return;
+      const pendingForSourceLang = pending.map((m) => {
+        const mine = isChatSelf(user, m.authorId);
+        if (mine) return { ...m, sourceLang: nativeLang };
+        if (m.authorId === LEARNING_BOT_USER_ID || m.kind === 'ai') {
+          return { ...m, sourceLang: learningLang };
+        }
+        return m;
+      });
+      for (const msg of pending) birkenInFlight.current.add(msg.id);
+      setBirkenBusy(true);
+      try {
+        const { translationsByMessage, errors } = await recalculateBirkenbihlForThread({
+          messages: pendingForSourceLang,
+          translationsByMessage: translationsRef.current,
+          asymmetric: (msg) =>
+            asymmetricFor(msg, {
+              native: nativeLang,
+              learning: learningLang,
+              partnerLearning: partnerLearningLang,
+            }) ?? {
+              senderUserId: msg.authorId,
+              receiverUserId: chatUserId ?? user.id,
+              senderLearningLang: learningLang,
+              receiverLearningLang: learningLang,
+              senderNativeLang: nativeLang,
+              receiverNativeLang: nativeLang,
+            },
+          engine: translation,
+          hintLang: nativeLang,
+          historyStore,
+          fillMissingOnly,
+        });
+        for (const [messageId, rows] of Object.entries(translationsByMessage)) {
+          try {
+            await chat.saveTranslations(messageId, rows);
+          } catch {
+            // keep going — per-message persistence must not fail the thread
+          }
+        }
+        setTranslations((prev) => ({ ...prev, ...translationsByMessage }));
+        if (errors.length > 0) {
+          setSendError(
+            errors.length === 1
+              ? `Birkenbihl recalc failed: ${errors[0]?.error}`
+              : `Birkenbihl recalc failed for ${errors.length} messages.`
+          );
+        }
+      } finally {
+        for (const msg of pending) birkenInFlight.current.delete(msg.id);
+        setBirkenBusy(birkenInFlight.current.size > 0);
+      }
+    },
+    [
+      user,
+      conversation,
+      nativeLang,
+      learningLang,
+      partnerLearningLang,
+      asymmetricFor,
+      translation,
+      historyStore,
+      chat,
+    ]
+  );
+
+  useEffect(() => {
+    if (mode !== 'birkenbihl' || messages.length === 0) return;
+    void runBirkenbihlRecalc(messages, true);
+  }, [mode, messages, runBirkenbihlRecalc]);
+
   const retranslateThread = useCallback(
     async (
       msgs: SourceMessage[],
@@ -341,19 +559,21 @@ export function ThreadScreen() {
       if (!user || !conversation) return;
       const map: Record<string, LineTranslation[]> = { ...translations };
       for (const msg of msgs) {
-        const asymmetric = {
-          senderUserId: msg.authorId,
-          receiverUserId: msg.authorId === user.id ? (otherParticipantId(conversation, user.id) ?? LEARNING_BOT_USER_ID) : user.id,
-          senderLearningLang: msg.authorId === user.id ? langs.learning : langs.partnerLearning,
-          receiverLearningLang: msg.authorId === user.id ? langs.partnerLearning : langs.learning,
-          senderNativeLang: msg.authorId === user.id ? langs.native : langs.learning,
-          receiverNativeLang: msg.authorId === user.id ? langs.learning : langs.native,
-        };
+        if (!shouldTranslateMessage(msg)) continue;
+        const asymmetric =
+          asymmetricFor(msg, langs) ?? {
+            senderUserId: msg.authorId,
+            receiverUserId: chatUserId ?? user.id,
+            senderLearningLang: langs.learning,
+            receiverLearningLang: langs.learning,
+            senderNativeLang: langs.native,
+            receiverNativeLang: langs.native,
+          };
         try {
           const { translations: next } = await processOutgoingTranslation({
             message: msg,
             asymmetric,
-            mode: toTranslationMode(mode),
+            mode: 'standard',
             engine: translation,
             historyStore,
             knownSourceLang: msg.sourceLang,
@@ -366,7 +586,7 @@ export function ThreadScreen() {
       }
       setTranslations(map);
     },
-    [user, conversation, translations, mode, translation, historyStore, chat]
+    [user, conversation, translations, translation, historyStore, chat, asymmetricFor, chatUserId]
   );
 
   const persistLanguages = useCallback(
@@ -375,9 +595,9 @@ export function ThreadScreen() {
       setNativeLang(next.native);
       setLearningLang(next.learning);
       setPartnerLearningLang(next.partnerLearning);
-      const receiverId = otherParticipantId(conversation, user.id) ?? LEARNING_BOT_USER_ID;
+      const receiverId = otherParticipantId(conversation, selfIds) ?? LEARNING_BOT_USER_ID;
       const participants = conversation.participants.map((p) => {
-        if (p.userId === user.id) {
+        if (isChatSelf(user, p.userId)) {
           return { ...p, nativeLang: next.native, learningLang: next.learning };
         }
         if (p.userId === receiverId) {
@@ -389,14 +609,15 @@ export function ThreadScreen() {
       setConversation({ ...conversation, participants });
       await retranslateThread(messages, next);
     },
-    [user, conversation, chat, messages, retranslateThread]
+    [user, conversation, chat, messages, retranslateThread, selfIds]
   );
 
   const load = useCallback(async () => {
+    if (user && chatUserId) await ensureLearningBotChat(chat, chatUserId, selfIds);
     let conv = await chat.getConversation(conversationId);
     let activeId = conversationId;
-    if (!conv && user) {
-      const botId = await ensureLearningBotChat(chat, user.id);
+    if (!conv && user && chatUserId) {
+      const botId = await ensureLearningBotChat(chat, chatUserId, selfIds);
       if (botId !== conversationId) {
         router.replace(learningBotHref(botId));
         return;
@@ -406,27 +627,29 @@ export function ThreadScreen() {
     }
     setConversation(conv);
     setBotReplies(conv?.aiEnabled !== false);
-    const participant = conv?.participants.find((p) => p.userId === user?.id);
-    const receiverId = conv && user ? otherParticipantId(conv, user.id) : undefined;
+    const participant = conv?.participants.find((p) => (user ? isChatSelf(user, p.userId) : false));
+    const receiverId = conv && user ? otherParticipantId(conv, selfIds) : undefined;
     const receiver = conv?.participants.find((p) => p.userId === receiverId);
     if (participant) {
       setNativeLang(participant.nativeLang);
       setLearningLang(participant.learningLang);
     }
     if (receiver) setPartnerLearningLang(receiver.learningLang);
-    const msgs = await chat.listMessages(activeId);
+    const thread = await loadConversationThread({
+      chat,
+      historyStore,
+      conversationId: activeId,
+      userId: chatUserId ?? user?.id,
+    });
     setMessages((prev) => {
       const pending = prev.filter(
-        (item) => inFlight.current.has(item.id) && !msgs.some((stored) => stored.id === item.id)
+        (item) =>
+          inFlight.current.has(item.id) && !thread.messages.some((stored) => stored.id === item.id)
       );
-      return upsertMessages(msgs, ...pending);
+      return upsertMessages(thread.messages, ...pending);
     });
-    const map: Record<string, LineTranslation[]> = {};
-    for (const msg of msgs) {
-      map[msg.id] = await chat.listTranslations(msg.id);
-    }
-    setTranslations(map);
-  }, [chat, conversationId, user?.id, router]);
+    setTranslations((prev) => mergeTranslationMaps(prev, thread.translations));
+  }, [chat, historyStore, conversationId, user?.id, chatUserId, selfIds, router]);
 
   useEffect(() => {
     void load();
@@ -437,6 +660,20 @@ export function ThreadScreen() {
         );
         return upsertMessages(next, ...pending);
       });
+      void (async () => {
+        const extras: Record<string, LineTranslation[]> = {};
+        for (const msg of next) {
+          const listed = await chat.listTranslations(msg.id);
+          if (listed.length > 0) extras[msg.id] = listed;
+        }
+        setTranslations((prev) => {
+          const merged: Record<string, LineTranslation[]> = { ...prev };
+          for (const [id, rows] of Object.entries(extras)) {
+            merged[id] = mergeLineTranslations(prev[id] ?? [], rows);
+          }
+          return merged;
+        });
+      })();
     });
   }, [chat, conversationId, load]);
 
@@ -445,25 +682,49 @@ export function ThreadScreen() {
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
   }, [messages]);
 
-  const send = async (text: string, retryOf?: SourceMessage) => {
-    const body = text.trim();
-    if (!body) return;
-
-    const authorId = user?.id ?? 'local';
+  const send = async (
+    input:
+      | { type: 'text'; text: string; retryOf?: SourceMessage }
+      | { type: 'image'; media: OutgoingMedia }
+      | { type: 'retry'; message: SourceMessage }
+  ) => {
+    const authorId = chatUserId ?? user?.id ?? 'local';
     let thread = conversation;
     let threadId = conversation?.id ?? conversationId;
 
-    const optimistic = retryOf
-      ? { ...retryOf, sourceText: body, receipt: 'pending' as const }
-      : sourceMessageFromText({
-          id: newMessageId('local'),
-          conversationId: threadId,
-          authorId,
-          sourceLang: viewpoint.native,
-          sourceText: body,
-          receipt: 'pending',
-          replyToId: replyTo?.id,
-        });
+    let optimistic: SourceMessage;
+    if (input.type === 'retry') {
+      optimistic = { ...input.message, receipt: 'pending' };
+    } else if (input.type === 'image') {
+      if (!input.media.url) return;
+      optimistic = sourceMessageFromImage({
+        id: newMessageId(),
+        conversationId: threadId,
+        authorId,
+        sourceLang: nativeLang,
+        imageUrl: input.media.url,
+        mediaKind: input.media.mediaKind,
+        alt: input.media.alt,
+        receipt: 'pending',
+        replyToId: replyTo?.id,
+      });
+    } else {
+      const body = input.text.trim();
+      if (!body) return;
+      optimistic = input.retryOf
+        ? { ...input.retryOf, sourceText: body, receipt: 'pending' as const }
+        : sourceMessageFromText({
+            id: newMessageId(),
+            conversationId: threadId,
+            authorId,
+            sourceLang: nativeLang,
+            sourceText: body,
+            receipt: 'pending',
+            replyToId: replyTo?.id,
+          });
+    }
+
+    const retryOf = input.type === 'retry' ? input.message : input.type === 'text' ? input.retryOf : undefined;
 
     if (inFlight.current.has(optimistic.id)) return;
     inFlight.current.add(optimistic.id);
@@ -485,7 +746,7 @@ export function ThreadScreen() {
     }
 
     if (!thread) {
-      threadId = await ensureLearningBotChat(chat, user.id);
+      threadId = await ensureLearningBotChat(chat, chatPersistenceUserId(user), selfIds);
       thread = await chat.getConversation(threadId);
       setConversation(thread);
       if (threadId !== conversationId) {
@@ -504,9 +765,9 @@ export function ThreadScreen() {
       return;
     }
 
-    const receiverId = otherParticipantId(thread, user.id) ?? LEARNING_BOT_USER_ID;
+    const receiverId = otherParticipantId(thread, selfIds) ?? LEARNING_BOT_USER_ID;
     const asymmetric: AsymmetricLanguageContext = {
-      senderUserId: user.id,
+      senderUserId: chatPersistenceUserId(user),
       receiverUserId: receiverId,
       senderLearningLang: learningLang,
       receiverLearningLang: partnerLearningLang,
@@ -535,9 +796,14 @@ export function ThreadScreen() {
         mode: toTranslationMode(mode),
         engine: translation,
         historyStore,
+        knownSourceLang: nativeLang,
+        existingTranslations: translationsRef.current[saved.id],
       });
       await chat.saveTranslations(saved.id, all);
-      setTranslations((prev) => ({ ...prev, [saved.id]: all }));
+      setTranslations((prev) => ({
+        ...prev,
+        [saved.id]: mergeLineTranslations(prev[saved.id] ?? [], all),
+      }));
       await chat.updateReceipt(saved.id, 'delivered');
       saved = { ...saved, receipt: 'delivered' };
       setMessages((prev) => upsertMessages(prev, saved));
@@ -545,8 +811,21 @@ export function ThreadScreen() {
       setMessages((prev) =>
         prev.map((m) => (m.id === optimistic.id ? { ...m, receipt: 'failed' } : m))
       );
-      setSendError(error instanceof Error ? error.message : "Couldn't send. Tap the bubble to retry.");
-      if (Platform.OS !== 'web') {
+      const msg =
+        error instanceof Error ? error.message : "Couldn't send. Tap the bubble to retry.";
+      setSendError(msg);
+      if (Platform.OS === 'web') {
+        const hidden = typeof document !== 'undefined' && document.visibilityState !== 'visible';
+        if (hidden) {
+          void showNotification({
+            title: 'Send failed',
+            body: msg.slice(0, 180),
+            url: learningBotHref(threadId),
+            data: { conversationId: threadId },
+            tag: `send-fail:${threadId}`,
+          });
+        }
+      } else {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
       inFlight.current.delete(optimistic.id);
@@ -554,13 +833,21 @@ export function ThreadScreen() {
     }
 
     const talkingToBot = isLearningBotConversation(thread);
-    if (botReplies && talkingToBot) {
-      const aiId = newMessageId('ai');
+    const isMedia = isMediaMessage(saved);
+    if (
+      shouldAutoReplyFromSendInput(input.type, {
+        botReplies,
+        talkingToBot,
+        isMediaMessage: isMedia,
+      })
+    ) {
+      const aiId = newMessageId();
       setStreamingId(aiId);
+      let storedAi: SourceMessage | undefined;
       try {
         const bilingual = await completeBilingualBotReply({
           completion,
-          learnerText: body,
+          learnerText: saved.sourceText,
           learningLang,
           nativeLang,
         });
@@ -573,12 +860,13 @@ export function ThreadScreen() {
           kind: 'ai',
           receipt: 'sent',
         });
-        const storedAi = await chat.appendMessage(aiMessage);
+        storedAi = await chat.appendMessage(aiMessage);
+        const persistedAi = storedAi;
         let aiTranslations = bilingual.translations;
         if (aiTranslations.length === 0) {
           const aiAsymmetric: AsymmetricLanguageContext = {
             senderUserId: LEARNING_BOT_USER_ID,
-            receiverUserId: user.id,
+            receiverUserId: chatUserId ?? user.id,
             senderLearningLang: partnerLearningLang,
             receiverLearningLang: learningLang,
             senderNativeLang: learningLang,
@@ -586,22 +874,39 @@ export function ThreadScreen() {
           };
           try {
             const { translations } = await processOutgoingTranslation({
-              message: storedAi,
+              message: persistedAi,
               asymmetric: aiAsymmetric,
               mode: toTranslationMode(mode),
               engine: translation,
               historyStore,
+              existingTranslations: translationsRef.current[persistedAi.id],
             });
-            aiTranslations = translations;
+            aiTranslations = mergeLineTranslations(
+              translationsRef.current[persistedAi.id] ?? [],
+              translations
+            );
           } catch {
             // Keep the bubble even if the translation pass fails.
           }
         }
         if (aiTranslations.length > 0) {
-          await chat.saveTranslations(storedAi.id, aiTranslations);
-          setTranslations((prev) => ({ ...prev, [storedAi.id]: aiTranslations }));
+          await chat.saveTranslations(persistedAi.id, aiTranslations);
+          try {
+            await persistCompletedHistory({
+              store: historyStore,
+              message: persistedAi,
+              translations: aiTranslations,
+              mode: 'standard',
+            });
+          } catch {
+            // Chat repo is the source of truth; history is a reload backup.
+          }
+          setTranslations((prev) => ({
+            ...prev,
+            [persistedAi.id]: mergeLineTranslations(prev[persistedAi.id] ?? [], aiTranslations),
+          }));
         }
-        setMessages((prev) => upsertMessages(prev, saved, storedAi));
+        setMessages((prev) => upsertMessages(prev, saved, persistedAi));
         const resilient =
           completion instanceof ResilientChatCompletionAdapter ? completion : null;
         if (resilient?.lastError && resilient.lastUsed === 'demo' && aiBackend !== 'demo') {
@@ -609,7 +914,7 @@ export function ThreadScreen() {
         }
       } catch (error) {
         setSendError(error instanceof Error ? error.message : `${LEARNING_BOT_DISPLAY_NAME} didn't reply.`);
-        setMessages((prev) => upsertMessages(prev, saved));
+        setMessages((prev) => upsertMessages(prev, saved, ...(storedAi ? [storedAi] : [])));
       } finally {
         setStreamingId(null);
       }
@@ -657,6 +962,8 @@ export function ThreadScreen() {
     aiBackend,
     onAiBackendChange: setAiBackend,
     health,
+    onRecalculateBirkenbihl: () => void runBirkenbihlRecalc(messages, false),
+    birkenbihlBusy: birkenBusy,
   };
 
   return (
@@ -684,23 +991,42 @@ export function ThreadScreen() {
         <FlatList
           ref={listRef}
           data={messages}
-          extraData={{ messages, translations }}
+          extraData={{ messages, translations, mode, birkenBusy, translationRetryIds }}
           keyExtractor={(item) => item.id}
           style={styles.flex}
+          initialNumToRender={Math.max(messages.length, 32)}
+          windowSize={21}
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
           contentContainerStyle={{ padding: 16, paddingBottom: 8, flexGrow: 1 }}
           renderItem={({ item }) => {
-            const mine = item.authorId === user?.id;
+            const mine = isChatSelf(user, item.authorId);
             const kind = item.kind === 'ai' || item.authorId === LEARNING_BOT_USER_ID ? 'ai' : item.kind;
-            const lines = renderViewpoint(item, translations[item.id] ?? [], viewpoint);
+            const itemForView = mine
+              ? { ...item, sourceLang: nativeLang }
+              : item.authorId === LEARNING_BOT_USER_ID || item.kind === 'ai'
+                ? { ...item, sourceLang: learningLang }
+                : item;
+            const lines = renderViewpoint(itemForView, translations[item.id] ?? [], viewpoint, {
+              own: mine,
+            });
+            const mismatch = translationMismatch({
+              message: itemForView,
+              translations: translations[item.id] ?? [],
+              viewpoint,
+            });
+            const canRetryTranslation =
+              mismatch &&
+              item.receipt !== 'failed' &&
+              shouldTranslateMessage(item) &&
+              mediaKindOf(item) !== 'sticker';
             return (
               <MessageBubble
                 mine={mine}
                 kind={kind}
                 lines={lines}
                 mode={mode}
-                language={item.sourceLang}
+                language={itemForView.sourceLang}
                 tokenizer={tokenizer}
                 wordTap={wordTap}
                 source={{ conversationId, messageId: item.id }}
@@ -711,7 +1037,20 @@ export function ThreadScreen() {
                 streaming={streamingId === item.id}
                 nativeLang={nativeLang}
                 learningLang={learningLang}
-                onRetry={() => void send(item.sourceText, item)}
+                imageUrls={imageUrlsOf(item)}
+                mediaKind={mediaKindOf(item)}
+                onRetry={() => void send({ type: 'retry', message: item })}
+                onRetryTranslation={
+                  canRetryTranslation ? () => void retryTranslation(item, mismatch) : undefined
+                }
+                translationRetryReason={canRetryTranslation ? mismatch : null}
+                translationRetryBusy={translationRetryIds.includes(item.id)}
+                onRetryBirkenbihl={
+                  mode === 'birkenbihl' && shouldTranslateMessage(item)
+                    ? () => void runBirkenbihlRecalc([item], false)
+                    : undefined
+                }
+                birkenbihlBusy={birkenInFlight.current.has(item.id)}
               />
             );
           }}
@@ -726,13 +1065,15 @@ export function ThreadScreen() {
         ) : null}
         <Composer
           colors={colors}
-          onSend={(text) => void send(text)}
+          onSend={(text) => void send({ type: 'text', text })}
+          onSendImage={(media) => void send({ type: 'image', media })}
           replyPreview={replyTo?.sourceText}
           onCancelReply={() => setReplyTo(null)}
           nativeLang={nativeLang}
+          learningLang={learningLang}
         />
       </KeyboardAvoidingView>
-      <WordTapToast token={tapToken} colors={colors} />
+      {vocabModal}
       <ChatSettingsSheet
         visible={settingsOpen && !wideChrome}
         onClose={() => setSettingsOpen(false)}

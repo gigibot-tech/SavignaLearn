@@ -7,9 +7,9 @@ SavignaLearn inverts Gigolingo’s foundation leak: **learning types live in `do
 | Port | MVP | Later Gigolingo |
 |------|-----|-----------------|
 | `TokenizerPort` | `defaultTokenizer` in `adapters/chat.ts` | ShieldLine tokenization rules |
-| `WordTapPort` | `noOpWordTap` | pending → card gen → save → confirmed |
-| `VocabularyCardPort` | `FakeVocabularyCardAdapter` | `AIService.generateVocabularyCard` / Llama |
-| `LearningItemRepository` | in-memory | `savigna_learning_items` + SRS |
+| `WordTapPort` | `createVocabularyWordTap` + create-card modal over the thread | pending_orange / confirmed_green colors |
+| `VocabularyCardPort` | `ChatCompletionVocabularyCardAdapter` (`getVocabularyCardPrompt`) | Llama / on-device |
+| `LearningItemRepository` | in-memory, identity upsert + `findById` refetch | `savigna_learning_items` + SRS |
 | `MediaCatalogPort` | `emptyMediaCatalog` | library / shield media |
 | `VocabularyDisplayPort` | (unused) | clicked / learned / colors |
 | `TranslationEngine` | echo or on-prem Gemma | same for media lines |

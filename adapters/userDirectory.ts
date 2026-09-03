@@ -11,6 +11,11 @@ import {
   ICESTORM_USERNAME,
   DEMO_LEARNER_EMAIL,
   DEMO_LEARNER_ID,
+  DEMO_LEARNER_IDO_USER_ID,
+  IDO_LEARN_EMAIL,
+  IDO_LEARN_USER_ID,
+  IDO_SAVINA_EMAIL,
+  IDO_SAVINA_USER_ID,
   normalizeEmail,
   normalizeUsername,
   parseFriendIdentifier,
@@ -34,6 +39,24 @@ export const DEMO_DIRECTORY_PROFILES: PublicProfile[] = [
     username: 'learner',
     displayName: 'Learner',
     email: DEMO_LEARNER_EMAIL,
+  },
+  {
+    id: DEMO_LEARNER_IDO_USER_ID,
+    username: 'learner',
+    displayName: 'Learner',
+    email: DEMO_LEARNER_EMAIL,
+  },
+  {
+    id: IDO_LEARN_USER_ID,
+    username: 'learn',
+    displayName: 'Learn',
+    email: IDO_LEARN_EMAIL,
+  },
+  {
+    id: IDO_SAVINA_USER_ID,
+    username: 'savina',
+    displayName: 'Learn',
+    email: IDO_SAVINA_EMAIL,
   },
 ];
 
@@ -104,18 +127,38 @@ function toPublicProfile(row: {
   display_name?: string | null;
 }): PublicProfile {
   const username = normalizeUsername(row.username || row.display_name || row.id.slice(0, 8));
+  const email =
+    row.id === DEMO_LEARNER_IDO_USER_ID || username === 'learner'
+      ? DEMO_LEARNER_EMAIL
+      : row.id === IDO_LEARN_USER_ID || username === 'learn'
+      ? IDO_LEARN_EMAIL
+      : row.id === IDO_SAVINA_USER_ID || username === 'savina'
+        ? IDO_SAVINA_EMAIL
+        : username === ICESTORM_USERNAME
+          ? ICESTORM_EMAIL
+          : '';
   return {
     id: row.id,
     username,
     displayName: row.display_name || username,
-    email: '',
+    email,
   };
 }
 
 /** Read-only iDO `profiles` lookup. Failures resolve to null (caller falls through). */
 export class IdoProfilesDirectory implements UserDirectoryPort {
   async findByEmail(email: string): Promise<PublicProfile | null> {
-    const local = normalizeUsername(normalizeEmail(email).split('@')[0] ?? '');
+    const normalized = normalizeEmail(email);
+    if (normalized === DEMO_LEARNER_EMAIL) {
+      return (await this.findById(DEMO_LEARNER_IDO_USER_ID)) ?? this.findByUsername('learner');
+    }
+    if (normalized === IDO_LEARN_EMAIL) {
+      return (await this.findById(IDO_LEARN_USER_ID)) ?? this.findByUsername('learn');
+    }
+    if (normalized === IDO_SAVINA_EMAIL) {
+      return (await this.findById(IDO_SAVINA_USER_ID)) ?? this.findByUsername('savina');
+    }
+    const local = normalizeUsername(normalized.split('@')[0] ?? '');
     if (!local) return null;
     return this.findByUsername(local);
   }

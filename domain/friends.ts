@@ -46,6 +46,14 @@ export type DirectoryPresence = {
 
 export const DEMO_LEARNER_ID = 'demo-user';
 export const DEMO_LEARNER_EMAIL = 'learner@savigna.local';
+/** iDO Auth user for the demo learner (password `demo`). */
+export const DEMO_LEARNER_IDO_USER_ID = '59485728-d2b7-4783-afa8-4c6738cde4c5';
+/** Real iDO Auth users (iDO! Ai Trial). Password: `learn`. */
+export const IDO_LEARN_EMAIL = 'learn@savigna.local';
+export const IDO_LEARN_PASSWORD = 'learn';
+export const IDO_LEARN_USER_ID = '4ca56a24-141c-425b-a1d3-0b5cb324cd2f';
+export const IDO_SAVINA_EMAIL = 'learn@savina.special';
+export const IDO_SAVINA_USER_ID = '93ad4a02-25a7-4787-ae01-a40c3000d637';
 export const ICESTORM_PROFILE_ID = 'friend-icestormfroste';
 export const ICESTORM_EMAIL = 'icestormfroste@gmail.com';
 export const ICESTORM_USERNAME = 'icestormfroste';
@@ -313,7 +321,16 @@ export function isLearningBotId(id: string): boolean {
 }
 
 export function isDemoLearnerIdentity(user: { id?: string; email?: string }): boolean {
-  return user.id === DEMO_LEARNER_ID || normalizeEmail(user.email ?? '') === DEMO_LEARNER_EMAIL;
+  const email = normalizeEmail(user.email ?? '');
+  return (
+    user.id === DEMO_LEARNER_ID ||
+    user.id === DEMO_LEARNER_IDO_USER_ID ||
+    user.id === IDO_LEARN_USER_ID ||
+    user.id === IDO_SAVINA_USER_ID ||
+    email === DEMO_LEARNER_EMAIL ||
+    email === IDO_LEARN_EMAIL ||
+    email === IDO_SAVINA_EMAIL
+  );
 }
 
 export function isIcestormIdentity(user: { id?: string; email?: string; username?: string }): boolean {

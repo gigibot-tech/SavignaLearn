@@ -5,7 +5,7 @@ import {
   processOutgoingTranslation,
 } from '@/adapters/translation';
 import { DEFAULT_STICKER_PACK, stickerMessageFromPack } from '@/adapters/stickers';
-import { InMemoryChatRepository } from '@/adapters/chat';
+import { InMemoryChatRepository } from '@/adapters/memoryChat';
 import {
   conversationPreviewFor,
   shouldTranslateMessage,
@@ -42,8 +42,10 @@ describe('sticker / image send', () => {
       authorId: 'u1',
       sourceLang: 'en',
     });
-    expect(message.mediaKind).toBe('sticker');
+    expect(message.sticker).toBe(true);
+    expect(message.contentKind).toBe('image');
     expect(message.kind).toBe('user');
+    expect(message.lines[0].mediaKind).toBe('sticker');
     expect(message.lines[0].imageUrls).toEqual(['sticker:cat']);
     expect(shouldTranslateMessage(message)).toBe(false);
     expect(conversationPreviewFor(message)).toBe('Sticker');
@@ -58,7 +60,9 @@ describe('sticker / image send', () => {
       imageUrl: 'data:image/png;base64,aaa',
       mediaKind: 'image',
     });
-    expect(message.mediaKind).toBe('image');
+    expect(message.contentKind).toBe('image');
+    expect(message.sticker).toBe(false);
+    expect(message.lines[0].mediaKind).toBe('image');
     expect(message.lines[0].imageUrls?.[0]).toMatch(/^data:image\//);
     expect(shouldTranslateMessage(message)).toBe(false);
     expect(conversationPreviewFor(message)).toBe('Photo');

@@ -163,8 +163,13 @@ export function isBackendSelectable(id: AiBackendId, health: AiHealthReport | nu
 /** Prefer a live cloud/on-prem backend over Demo. Keep the current pick when it is still up. */
 export const LIVE_BACKEND_PRIORITY: AiBackendId[] = ['onprem', 'openai', 'ido', 'foursome'];
 
-export function preferredLiveBackend(checks: ProbeResult[], current: AiBackendId): AiBackendId {
+export function preferredLiveBackend(
+  checks: ProbeResult[],
+  current: AiBackendId,
+  options?: { preferIdo?: boolean }
+): AiBackendId {
   if (current !== 'demo' && isBackendOnline(current, checks)) return current;
+  if (options?.preferIdo && isBackendOnline('ido', checks)) return 'ido';
   return LIVE_BACKEND_PRIORITY.find((id) => isBackendOnline(id, checks)) ?? 'demo';
 }
 

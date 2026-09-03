@@ -5,7 +5,6 @@
 
 import {
   sourceMessageFromImage,
-  stickerUri,
   type LanguageCode,
   type SourceMessage,
 } from '@/domain/chat';
@@ -18,10 +17,11 @@ export interface StickerPackItem {
   uri: string;
 }
 
+/** Literal `sticker:` URIs — do not call `stickerUri()` at module init (Metro cycle). */
 export const DEFAULT_STICKER_PACK: readonly StickerPackItem[] = [
-  { id: 'cat', label: 'Cat meme', uri: stickerUri('cat') },
-  { id: 'hand', label: 'Hand fox', uri: stickerUri('hand') },
-  { id: 'slay', label: 'Slay', uri: stickerUri('slay') },
+  { id: 'cat', label: 'Cat meme', uri: 'sticker:cat' },
+  { id: 'hand', label: 'Hand fox', uri: 'sticker:hand' },
+  { id: 'slay', label: 'Slay', uri: 'sticker:slay' },
 ];
 
 export function stickerById(id: string): StickerPackItem | undefined {
@@ -46,6 +46,5 @@ export function stickerMessageFromPack(input: {
     sourceLang: input.sourceLang,
     imageUrl: pack.uri,
     mediaKind: 'sticker',
-    alt: pack.label,
   });
 }

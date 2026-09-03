@@ -18,7 +18,7 @@ Local production check:
 
 ```bash
 npm run build:web
-npx expo serve
+npm run serve:web
 ```
 
 Then `netlify deploy` / `netlify deploy --prod` (or Git-connected continuous deploy).

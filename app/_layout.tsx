@@ -6,11 +6,13 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { ensureLearningBotChat } from '@/adapters/chat';
+import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref, needsPostLoginBotRedirect } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
 import { Colors } from '@/constants/Colors';
 import { AppProviders, useAuthState, useServices } from '@/features/chat/AppProviders';
 import { AuthGate } from '@/features/chat/AuthGate';
+import { NotificationsProvider } from '@/features/notifications/NotificationProvider';
 import { AppShell } from '@/features/shell/AppShell';
 
 export { ErrorBoundary } from 'expo-router';
@@ -39,11 +41,13 @@ export default function RootLayout() {
 
   return (
     <AppProviders>
-      <AuthGate>
-        <AppShell>
-          <RootLayoutNav />
-        </AppShell>
-      </AuthGate>
+      <NotificationsProvider>
+        <AuthGate>
+          <AppShell>
+            <RootLayoutNav />
+          </AppShell>
+        </AuthGate>
+      </NotificationsProvider>
     </AppProviders>
   );
 }
@@ -59,7 +63,7 @@ function RootLayoutNav() {
     if (!justSignedIn || !user) return;
     let cancelled = false;
     void (async () => {
-      const id = await ensureLearningBotChat(chat, user.id);
+      const id = await ensureLearningBotChat(chat, chatPersistenceUserId(user), chatActorIds(user));
       if (cancelled) return;
       if (needsPostLoginBotRedirect(pathname, id)) {
         router.replace(learningBotHref(id));

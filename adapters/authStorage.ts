@@ -5,10 +5,16 @@ const DEMO_SESSION_KEY = 'savignalearn.demo.session';
 
 export const DEMO_LEARNER_EMAIL = 'learner@savigna.local';
 export const DEMO_LEARNER_PASSWORD = 'demo';
+export const IDO_LEARN_EMAIL = 'learn@savigna.local';
+export const IDO_SAVINA_EMAIL = 'learn@savina.special';
+export const IDO_LEARN_PASSWORD = 'learn';
 
 export function isDemoLearnerCredentials(email: string, password: string): boolean {
   const normalized = email.trim().toLowerCase();
-  return normalized.endsWith('@savigna.local') && password === DEMO_LEARNER_PASSWORD;
+  if (normalized.endsWith('@savigna.local') && password === DEMO_LEARNER_PASSWORD) return true;
+  if (normalized === IDO_LEARN_EMAIL && password === IDO_LEARN_PASSWORD) return true;
+  if (normalized === IDO_SAVINA_EMAIL && password === IDO_LEARN_PASSWORD) return true;
+  return false;
 }
 
 function webStore(keep: boolean): Storage | null {
@@ -36,30 +42,27 @@ export function setKeepLoggedIn(keep: boolean): void {
 /** Storage that honors “Keep me logged in”: local when on, tab session when off. */
 export const authStorage = {
   async getItem(key: string): Promise<string | null> {
-    if (typeof window !== 'undefined') {
-      const keep = shouldKeepLoggedIn();
-      const web = webStore(keep)?.getItem(key);
-      if (web != null) return web;
-      if (!keep) return null;
-    }
+    if (typeof window === 'undefined') return null;
+    const keep = shouldKeepLoggedIn();
+    const web = webStore(keep)?.getItem(key);
+    if (web != null) return web;
+    if (!keep) return null;
     return AsyncStorage.getItem(key);
   },
   async setItem(key: string, value: string): Promise<void> {
-    if (typeof window !== 'undefined') {
-      const keep = shouldKeepLoggedIn();
-      webStore(keep)?.setItem(key, value);
-      if (!keep) {
-        window.localStorage.removeItem(key);
-        return;
-      }
+    if (typeof window === 'undefined') return;
+    const keep = shouldKeepLoggedIn();
+    webStore(keep)?.setItem(key, value);
+    if (!keep) {
+      window.localStorage.removeItem(key);
+      return;
     }
     await AsyncStorage.setItem(key, value);
   },
   async removeItem(key: string): Promise<void> {
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.removeItem(key);
-      window.localStorage.removeItem(key);
-    }
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.removeItem(key);
+    window.localStorage.removeItem(key);
     await AsyncStorage.removeItem(key);
   },
 };

@@ -12,6 +12,7 @@ export type {
   Conversation,
   DisplayLine,
   TranslationRequest,
+  TranslationMismatchReason,
 } from './chat';
 export {
   normalizeLanguageCode,
@@ -33,10 +34,17 @@ export {
   otherParticipantId,
   viewpointLangsFor,
   translationFor,
+  storedBirkenbihlFor,
+  translationMismatch,
+  translationRetryWhy,
   planLineJobs,
+  assembleLineTranslations,
+  renderViewpoint,
   LEARNING_BOT_USER_ID,
   LEARNING_BOT_DISPLAY_NAME,
   isLearningBotConversation,
+  pickLearningBotConversation,
+  collapseDuplicateLearningBots,
 } from './chat';
 
 export type {
@@ -50,17 +58,24 @@ export {
   toGigolingoSourceMediaId,
   toGigolingoSourceMediaName,
   createLearningItem,
+  learningItemIdentityKey,
+  findMatchingLearningItem,
   toMediaBlock,
   fromMediaBlock,
 } from './learning';
 
-export type { InterlinearSegment } from './text';
+export type { InterlinearSegment, TextTokenPiece } from './text';
 export {
   parseInterlinear,
   extractOriginalText,
   hasInterlinearFormat,
+  isUsableBirkenbihlOverlay,
   createInterlinearFormat,
   tokenizeText,
+  splitTextWithTokens,
+  tokenAtCharOffset,
+  joinSelectionAsSentence,
+  joinOriginalsFromSelection,
 } from './text';
 
 export type {
@@ -112,6 +127,7 @@ export {
   toTranslationMode,
   buildTranslationPayload,
   buildDetectThenTranslatePrompt,
+  buildBirkenbihlTranslatePrompt,
   parseDetectThenTranslateJson,
   extractJsonObject,
   buildBilingualChatPrompt,
@@ -121,34 +137,8 @@ export {
   createChatHistoryRecord,
   transitionChatHistory,
   splitTranslationIntoLines,
+  mergeTranslationsByMode,
+  mergeLineTranslations,
+  mergeTranslationMaps,
+  hasBirkenbihlTranslation,
 } from './pipeline';
-
-import {
-  assembleLineTranslations as assembleCore,
-  renderViewpoint as renderViewpointCore,
-  type DisplayLine,
-  type DisplayMode,
-  type LanguageCode,
-  type LearnerViewpoint,
-  type LineTranslation,
-  type SourceMessage,
-} from './chat';
-import { createInterlinearFormat } from './text';
-
-/** Bind Birkenbihl helper so callers import from domain once. */
-export function renderViewpoint(
-  message: SourceMessage,
-  translations: LineTranslation[],
-  viewpoint: LearnerViewpoint
-): DisplayLine[] {
-  return renderViewpointCore(message, translations, viewpoint, createInterlinearFormat);
-}
-
-export function assembleLineTranslations(
-  lines: string[],
-  translated: string[],
-  targetLang: LanguageCode,
-  mode: DisplayMode
-) {
-  return assembleCore(lines, translated, targetLang, mode, createInterlinearFormat);
-}

@@ -8,8 +8,9 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions,
 import { Ionicons } from '@expo/vector-icons';
 import { router, usePathname } from 'expo-router';
 import { learningBotHref } from '@/adapters/postLogin';
-import { ensureLearningBotChat } from '@/adapters/chat';
+import { ensureLearningBotChat, listInboxConversations } from '@/adapters/chat';
 import { findOrCreateDirectChat, usernameFromUser } from '@/adapters/friends';
+import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
 import { friendInconsistencyMessage, type FriendRow } from '@/domain/friends';
 import type { Conversation } from '@/domain/chat';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -87,8 +88,9 @@ function FourSomeSidebar({ section, pathname }: { section: ShellSection; pathnam
   useEffect(() => {
     if (!user) return;
     void (async () => {
-      await ensureLearningBotChat(chat, user.id);
-      setConversations(await chat.listConversations(user.id));
+      const ids = chatActorIds(user);
+      await ensureLearningBotChat(chat, chatPersistenceUserId(user), ids);
+      setConversations(await listInboxConversations(chat, ids));
     })();
   }, [chat, user, pathname, friendsTick]);
 
@@ -105,7 +107,7 @@ function FourSomeSidebar({ section, pathname }: { section: ShellSection; pathnam
 
   const openFriendChat = async (row: FriendRow) => {
     if (!user || row.inconsistent) return;
-    const conv = await findOrCreateDirectChat(chat, { id: user.id }, {
+    const conv = await findOrCreateDirectChat(chat, { id: chatPersistenceUserId(user) }, {
       id: row.userId,
       username: row.username,
       displayName: row.displayName,

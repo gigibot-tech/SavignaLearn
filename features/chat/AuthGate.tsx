@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { router } from 'expo-router';
 import { useColorScheme } from '@/components/useColorScheme';
 import { ensureLearningBotChat } from '@/adapters/chat';
+import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
 import { isMixedIdentityConfigured } from '@/adapters/mixedAuth';
 import { setKeepLoggedIn } from '@/adapters/authStorage';
 import { learningBotHref } from '@/adapters/postLogin';
@@ -21,7 +22,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     try {
       const session = await auth.signInWithPassword(email, password);
       markJustSignedIn();
-      const id = await ensureLearningBotChat(chat, session.id);
+      const id = await ensureLearningBotChat(
+        chat,
+        chatPersistenceUserId(session),
+        chatActorIds(session)
+      );
       router.replace(learningBotHref(id));
     } catch (error) {
       setBootstrapping(false);
