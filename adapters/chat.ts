@@ -141,7 +141,7 @@ export class InMemoryChatRepository implements ChatRepository {
     this.messages.set(message.conversationId, list);
     const conversation = this.conversations.find((item) => item.id === message.conversationId);
     if (conversation) {
-      conversation.lastMessagePreview = message.sourceText.split('\n')[0];
+      conversation.lastMessagePreview = messagePreview(message);
       conversation.updatedAt = message.createdAt;
     }
     this.emit(message.conversationId);

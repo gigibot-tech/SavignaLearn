@@ -10,7 +10,7 @@ import { router, usePathname } from 'expo-router';
 import { learningBotHref } from '@/adapters/postLogin';
 import { ensureLearningBotChat } from '@/adapters/chat';
 import { findOrCreateDirectChat, usernameFromUser } from '@/adapters/friends';
-import { listFriendRows, type FriendRow } from '@/domain/friends';
+import { friendInconsistencyMessage, type FriendRow } from '@/domain/friends';
 import type { Conversation } from '@/domain/chat';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
@@ -95,12 +95,7 @@ function FourSomeSidebar({ section, pathname }: { section: ShellSection; pathnam
   useEffect(() => {
     if (!user) return;
     void (async () => {
-      const list = await friends.listFor(user.id);
-      const ids = [
-        ...new Set(list.flatMap((row) => [row.requesterId, row.addresseeId])),
-      ].filter((id) => id !== user.id);
-      const profiles = await friends.listProfiles(ids);
-      setFriendRows(listFriendRows(list, profiles, user.id));
+      setFriendRows(await friends.reconcile(user.id));
     })();
   }, [friends, user, friendsTick, pathname]);
 
@@ -109,11 +104,12 @@ function FourSomeSidebar({ section, pathname }: { section: ShellSection; pathnam
   const username = user ? usernameFromUser(user) : '';
 
   const openFriendChat = async (row: FriendRow) => {
-    if (!user) return;
+    if (!user || row.inconsistent) return;
     const conv = await findOrCreateDirectChat(chat, { id: user.id }, {
       id: row.userId,
       username: row.username,
       displayName: row.displayName,
+      email: row.email,
     });
     bumpFriends();
     router.push(learningBotHref(conv.id));
@@ -160,16 +156,42 @@ function FourSomeSidebar({ section, pathname }: { section: ShellSection; pathnam
             <Text style={[styles.empty, { color: colors.textMuted }]}>No friends yet — add someone by email or friend link.</Text>
           ) : (
             accepted.map((row) => (
-              <Pressable
+              <View
                 key={row.friendshipId}
-                onPress={() => void openFriendChat(row)}
                 style={[styles.friendHit, { borderColor: colors.border }]}
-                accessibilityRole="button"
-                accessibilityLabel={`Chat with ${row.displayName}`}
               >
-                <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                <Text style={{ color: colors.textMuted, fontSize: 12 }}>@{row.username}</Text>
-              </Pressable>
+                <Pressable
+                  onPress={() => void openFriendChat(row)}
+                  disabled={row.inconsistent}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    row.inconsistent ? `${row.displayName} inconsistent` : `Chat with ${row.displayName}`
+                  }
+                >
+                  <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>@{row.username}</Text>
+                  {row.email ? (
+                    <Text style={{ color: colors.textMuted, fontSize: 11 }}>{row.email}</Text>
+                  ) : null}
+                  {row.inconsistent ? (
+                    <Text style={{ color: colors.danger, fontSize: 11, marginTop: 4, fontWeight: '700' }}>
+                      Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
+                    </Text>
+                  ) : null}
+                </Pressable>
+                {row.inconsistent ? (
+                  <Pressable
+                    onPress={() =>
+                      void friends.remove(user!.id, row.friendshipId).then(() => bumpFriends())
+                    }
+                    style={{ marginTop: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${row.displayName}`}
+                  >
+                    <Text style={{ color: colors.danger, fontWeight: '700', fontSize: 13 }}>Delete</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             ))
           )}
         </ScrollView>

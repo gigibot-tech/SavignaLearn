@@ -9,8 +9,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import {
   FriendRequestFailed,
+  friendInconsistencyMessage,
   friendRequestErrorMessage,
-  listFriendRows,
   type FriendRequestError,
   type FriendRow,
 } from '@/domain/friends';
@@ -28,6 +28,7 @@ const ERROR_CODES: FriendRequestError[] = [
   'not_found_savigna',
   'not_found_ido',
   'malformed_link',
+  'missing_email',
   'already_friends',
   'already_requested',
 ];
@@ -55,12 +56,7 @@ export function FriendsScreen() {
 
   const refresh = useCallback(async () => {
     if (!user) return;
-    const list = await friends.listFor(user.id);
-    const ids = [...new Set(list.flatMap((row) => [row.requesterId, row.addresseeId]))].filter(
-      (id) => id !== user.id
-    );
-    const profiles = await friends.listProfiles(ids);
-    setRows(listFriendRows(list, profiles, user.id));
+    setRows(await friends.reconcile(user.id));
   }, [friends, user]);
 
   useEffect(() => {
@@ -97,13 +93,21 @@ export function FriendsScreen() {
   }, [addParam, user]);
 
   const openChat = async (row: FriendRow) => {
-    if (!user) return;
+    if (!user || row.inconsistent) return;
     const conv = await findOrCreateDirectChat(chat, { id: user.id }, {
       id: row.userId,
       username: row.username,
       displayName: row.displayName,
+      email: row.email,
     });
     router.push(learningBotHref(conv.id));
+  };
+
+  const removeRow = async (row: FriendRow) => {
+    if (!user) return;
+    await friends.remove(user.id, row.friendshipId);
+    bumpFriends();
+    await refresh();
   };
 
   const copy = async (kind: 'link' | 'id') => {
@@ -178,33 +182,53 @@ export function FriendsScreen() {
               <View key={row.friendshipId} style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>@{row.username}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                    @{row.username}
+                    {row.email ? ` · ${row.email}` : ''}
+                  </Text>
+                  {row.inconsistent ? (
+                    <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
+                      Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
+                    </Text>
+                  ) : null}
                 </View>
-                <Pressable
-                  onPress={() =>
-                    void friends.accept(user!.id, row.friendshipId).then(() => {
-                      bumpFriends();
-                      return refresh();
-                    })
-                  }
-                  style={[styles.pill, { backgroundColor: colors.accentSoft }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Accept ${row.displayName}`}
-                >
-                  <Text style={{ color: colors.text, fontWeight: '700' }}>Accept</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() =>
-                    void friends.decline(user!.id, row.friendshipId).then(() => {
-                      bumpFriends();
-                      return refresh();
-                    })
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel={`Decline ${row.displayName}`}
-                >
-                  <Text style={{ color: colors.textMuted, fontWeight: '600' }}>Decline</Text>
-                </Pressable>
+                {row.inconsistent ? (
+                  <Pressable
+                    onPress={() => void removeRow(row)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${row.displayName}`}
+                  >
+                    <Text style={{ color: colors.danger, fontWeight: '700' }}>Delete</Text>
+                  </Pressable>
+                ) : (
+                  <>
+                    <Pressable
+                      onPress={() =>
+                        void friends.accept(user!.id, row.friendshipId).then(() => {
+                          bumpFriends();
+                          return refresh();
+                        })
+                      }
+                      style={[styles.pill, { backgroundColor: colors.accentSoft }]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Accept ${row.displayName}`}
+                    >
+                      <Text style={{ color: colors.text, fontWeight: '700' }}>Accept</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() =>
+                        void friends.decline(user!.id, row.friendshipId).then(() => {
+                          bumpFriends();
+                          return refresh();
+                        })
+                      }
+                      accessibilityRole="button"
+                      accessibilityLabel={`Decline ${row.displayName}`}
+                    >
+                      <Text style={{ color: colors.textMuted, fontWeight: '600' }}>Decline</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
             ))}
           </View>
@@ -217,8 +241,25 @@ export function FriendsScreen() {
               <View key={row.friendshipId} style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>Waiting · @{row.username}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                    Waiting · @{row.username}
+                    {row.email ? ` · ${row.email}` : ''}
+                  </Text>
+                  {row.inconsistent ? (
+                    <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
+                      Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
+                    </Text>
+                  ) : null}
                 </View>
+                <Pressable
+                  onPress={() => void removeRow(row)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${row.inconsistent ? 'Delete' : 'Cancel'} ${row.displayName}`}
+                >
+                  <Text style={{ color: row.inconsistent ? colors.danger : colors.textMuted, fontWeight: '700' }}>
+                    {row.inconsistent ? 'Delete' : 'Cancel'}
+                  </Text>
+                </Pressable>
               </View>
             ))}
           </View>
@@ -231,26 +272,90 @@ export function FriendsScreen() {
               <Text style={{ color: colors.textMuted, marginTop: 8 }}>No friends yet.</Text>
             ) : (
               accepted.map((row) => (
-                <Pressable
+                <View
                   key={row.friendshipId}
-                  onPress={() => void openChat(row)}
                   style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Chat with ${row.displayName}`}
                 >
-                  <View style={{ flex: 1 }}>
+                  <Pressable
+                    onPress={() => void openChat(row)}
+                    disabled={row.inconsistent}
+                    style={{ flex: 1 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={row.inconsistent ? `${row.displayName} inconsistent` : `Chat with ${row.displayName}`}
+                  >
                     <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                    <Text style={{ color: colors.textMuted, fontSize: 12 }}>@{row.username}</Text>
-                  </View>
-                  <Text style={{ color: colors.accent, fontWeight: '700' }}>Chat</Text>
-                </Pressable>
+                    <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                      @{row.username}
+                      {row.email ? ` · ${row.email}` : ''}
+                    </Text>
+                    {row.inconsistent ? (
+                      <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
+                        Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                  {row.inconsistent ? (
+                    <Pressable
+                      onPress={() => void removeRow(row)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${row.displayName}`}
+                    >
+                      <Text style={{ color: colors.danger, fontWeight: '700' }}>Delete</Text>
+                    </Pressable>
+                  ) : (
+                    <>
+                      <Text style={{ color: colors.accent, fontWeight: '700' }}>Chat</Text>
+                      <Pressable
+                        onPress={() => void removeRow(row)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${row.displayName}`}
+                      >
+                        <Text style={{ color: colors.textMuted, fontWeight: '600' }}>Remove</Text>
+                      </Pressable>
+                    </>
+                  )}
+                </View>
               ))
             )}
           </View>
         ) : (
-          <Text style={{ color: colors.textMuted, paddingHorizontal: 16, marginTop: 16 }}>
-            Your friends stay in the sidebar. Tap one to open a chat.
-          </Text>
+          <View style={{ paddingHorizontal: 16, marginTop: 16 }}>
+            {accepted.some((row) => row.inconsistent) ? (
+              <>
+                <Text style={[styles.section, { color: colors.textMuted }]}>Needs attention</Text>
+                {accepted
+                  .filter((row) => row.inconsistent)
+                  .map((row) => (
+                    <View
+                      key={row.friendshipId}
+                      style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
+                        <Text style={{ color: colors.textMuted, fontSize: 12 }}>
+                          @{row.username}
+                          {row.email ? ` · ${row.email}` : ''}
+                        </Text>
+                        <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
+                          Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => void removeRow(row)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete ${row.displayName}`}
+                      >
+                        <Text style={{ color: colors.danger, fontWeight: '700' }}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+              </>
+            ) : (
+              <Text style={{ color: colors.textMuted }}>
+                Your friends stay in the sidebar. Tap one to open a chat.
+              </Text>
+            )}
+          </View>
         )}
       </ScrollView>
 

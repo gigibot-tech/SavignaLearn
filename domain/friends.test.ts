@@ -11,12 +11,15 @@ import {
   friendShareUrl,
   friendshipPairKey,
   kindForViewer,
+  listFriendRows,
+  normalizeUsername,
+  parseFriendIdentifier,
+  parseFriendShareInput,
+  profileEmail,
+  seedMutualAccepted,
   friendInconsistency,
   friendInconsistencyMessage,
   isDeletedPair,
-  listFriendRows,
-  profileEmail,
-  seedMutualAccepted,
   validateFriendRequest,
   type Friendship,
   type PublicProfile,
@@ -289,6 +292,7 @@ describe('friendRequestErrorMessage', () => {
     expect(friendRequestErrorMessage('not_found_ido')).toMatch(/iDO/i);
     expect(friendRequestErrorMessage('malformed_link')).toMatch(/link/i);
     expect(friendRequestErrorMessage('empty')).toMatch(/email/i);
+    expect(friendRequestErrorMessage('missing_email')).toMatch(/email/i);
     expect(friendRequestErrorMessage('self')).toMatch(/you/i);
   });
 });

@@ -13,7 +13,7 @@ import type {
 } from '@/domain/chat';
 import type { LearningItem, LearningSource, MediaCompatibleBlock } from '@/domain/learning';
 import type { AsymmetricLanguageContext, ChatHistoryStore } from '@/domain/pipeline';
-import type { Friendship, PublicProfile } from '@/domain/friends';
+import type { FriendRow, Friendship, PublicProfile } from '@/domain/friends';
 
 export interface ChatRepository {
   listConversations(userId: string): Promise<Conversation[]>;
@@ -157,6 +157,8 @@ export interface FriendsRepository {
   findByUsername(username: string): Promise<PublicProfile | null>;
   listFor(viewerId: string): Promise<Friendship[]>;
   listProfiles(ids: string[]): Promise<PublicProfile[]>;
+  /** Re-check each friend against SavignaLearn + iDO. Marks inconsistent rows; never invents ghosts. */
+  reconcile(viewerId: string): Promise<FriendRow[]>;
   /** Identifier: email, user id, `/friends?add=` link, or demo username. */
   request(viewerId: string, identifier: string): Promise<Friendship>;
   accept(viewerId: string, friendshipId: string): Promise<void>;

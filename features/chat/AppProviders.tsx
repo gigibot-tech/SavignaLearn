@@ -277,7 +277,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         id: handle,
         username: usernameFromUser(user),
         displayName: user.displayName ?? usernameFromUser(user),
-        email: user.email,
+        email: user.email ?? '',
       });
       memoryFriends.seedForViewer(handle, { id: handle, email: user.email });
       await ensureLearningBotChat(chat, handle);

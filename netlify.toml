@@ -1,0 +1,29 @@
+# SavignaLearn is Expo Router with web.output = "server" (API routes).
+# fourSome is Expo web.output = "single" (static SPA) — do not copy its
+# publish = dist + /* → /index.html 200 redirects; that would skip /api/*.
+#
+# Official adapter: https://docs.expo.dev/router/web/api-routes/#netlify
+
+[build]
+  command = "npm run build:web"
+  publish = "dist/client"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--include=dev"
+
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["dist/server/**/*"]
+
+# Static files in dist/client win; missing paths (API + dynamic routes) hit Expo.
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/server"
+  status = 404
+
+[[headers]]
+  for = "/dist/server/_expo/functions/*"
+  [headers.values]
+    Cache-Control = "public, max-age=60, s-maxage=60"

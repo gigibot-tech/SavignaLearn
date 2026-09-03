@@ -74,6 +74,18 @@ export function receiptMark(
 }
 
 export type MessageKind = 'user' | 'ai' | 'system';
+/** Stickers are images; tighter bubble sizing vs a picked photo. */
+export type MessageMediaKind = 'image' | 'sticker';
+
+export const STICKER_URI_PREFIX = 'sticker:';
+
+export function stickerUri(id: string): string {
+  return `${STICKER_URI_PREFIX}${id}`;
+}
+
+export function parseStickerId(uri: string): string | undefined {
+  return uri.startsWith(STICKER_URI_PREFIX) ? uri.slice(STICKER_URI_PREFIX.length) : undefined;
+}
 
 export interface MessageLine {
   content: string;
@@ -91,6 +103,7 @@ export interface SourceMessage {
   sourceText: string;
   lines: MessageLine[];
   kind: MessageKind;
+  mediaKind?: MessageMediaKind;
   replyToId?: string;
   editedAt?: string;
   deletedAt?: string;
@@ -137,6 +150,71 @@ export function sourceMessageFromText(input: {
     receipt: input.receipt ?? 'pending',
     createdAt: input.createdAt ?? new Date().toISOString(),
   };
+}
+
+export function sourceMessageFromImage(input: {
+  id: string;
+  conversationId: string;
+  authorId: string;
+  sourceLang: LanguageCode;
+  imageUrl: string;
+  mediaKind?: MessageMediaKind;
+  alt?: string;
+  kind?: MessageKind;
+  receipt?: ReceiptStatus;
+  createdAt?: string;
+  replyToId?: string;
+}): SourceMessage {
+  const alt = (input.alt ?? '').trim();
+  const mediaKind = input.mediaKind ?? (parseStickerId(input.imageUrl) ? 'sticker' : 'image');
+  return {
+    id: input.id,
+    conversationId: input.conversationId,
+    authorId: input.authorId,
+    sourceLang: input.sourceLang,
+    sourceText: alt,
+    lines: [{ content: alt, imageUrls: [input.imageUrl] }],
+    kind: input.kind ?? 'user',
+    mediaKind,
+    replyToId: input.replyToId,
+    receipt: input.receipt ?? 'pending',
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+}
+
+export function imageUrlsOf(message: Pick<SourceMessage, 'lines'>): string[] {
+  return message.lines.flatMap((line) => (Array.isArray(line.imageUrls) ? line.imageUrls : []));
+}
+
+export function mediaKindOf(
+  message: Pick<SourceMessage, 'lines' | 'mediaKind'>
+): MessageMediaKind | undefined {
+  if (message.mediaKind) return message.mediaKind;
+  const urls = imageUrlsOf(message);
+  if (urls.some((url) => parseStickerId(url))) return 'sticker';
+  if (urls.length > 0) return 'image';
+  return undefined;
+}
+
+export function isMediaMessage(message: Pick<SourceMessage, 'lines' | 'mediaKind'>): boolean {
+  return mediaKindOf(message) !== undefined;
+}
+
+/** Stickers and caption-less photos skip the translation pipeline. */
+export function shouldTranslateMessage(
+  message: Pick<SourceMessage, 'sourceText' | 'lines' | 'mediaKind'>
+): boolean {
+  if (mediaKindOf(message) === 'sticker') return false;
+  if (isMediaMessage(message) && !message.sourceText.trim()) return false;
+  return message.sourceText.trim().length > 0;
+}
+
+export function conversationPreviewFor(
+  message: Pick<SourceMessage, 'sourceText' | 'lines' | 'mediaKind'>
+): string {
+  if (mediaKindOf(message) === 'sticker') return 'Sticker';
+  if (isMediaMessage(message) && !message.sourceText.trim()) return 'Photo';
+  return message.sourceText.split('\n')[0] ?? '';
 }
 
 export interface ConversationParticipant {

@@ -24,7 +24,7 @@ Pick **fourSome / On-prem / OpenAI / iDO / Demo** in **this chat** (header slide
 | --- | --- |
 | **fourSome** | Same cascade as fourSome `gigi_engine`: **on-prem (vLLM / OpenAI-compatible) first**, then **OpenAI**. Requires a **fourSome sign-in** (not a pasted UUID). Optional GiGi WebSocket uses that session’s user id. |
 | **On-prem** | Local OpenAI-compatible server only (`EXPO_PUBLIC_ONPREM_CHAT_URL`, e.g. `http://127.0.0.1:8000/v1` or Ollama `http://127.0.0.1:11434/v1`). |
-| **OpenAI** | Cloud GPT via Expo `/api/openai/chat`. Needs a valid **server** key. |
+| **OpenAI** | Cloud GPT via Expo `/api/openai/chat`. Needs a valid **server** key. On Netlify that route is the Expo **server function**, not a static file — see `docs/setup/netlify.md`. |
 | **iDO** | ido-core Edge Function `ai-assist`. Requires an **iDO sign-in**. |
 | **Demo** | Scripted replies. |
 

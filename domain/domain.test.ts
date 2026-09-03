@@ -76,6 +76,49 @@ describe('renderViewpoint', () => {
     );
     expect(view[0].learningText).toBe('Bonjour');
   });
+
+  it('does not invent Birkenbihl interlinear from lines/native text', () => {
+    const message = sourceMessageFromText({
+      id: 'm-es',
+      conversationId: 'c1',
+      authorId: 'bot',
+      sourceLang: 'es',
+      sourceText: '¿Por qué es así?',
+    });
+    const view = renderViewpoint(
+      message,
+      [
+        { lineIndex: 0, targetLang: 'de', text: 'Warum ist es so?', mode: 'lines' },
+        { lineIndex: 0, targetLang: 'en', text: 'Why is it this', mode: 'lines' },
+      ],
+      { native: 'en', learning: 'es', displayMode: 'birkenbihl' }
+    );
+    expect(view[0].sourceText).toBe('¿Por qué es así?');
+    expect(view[0].birkenbihl).toBeUndefined();
+    expect(view[0].birkenbihl ?? '').not.toMatch(/Warum|Why is it this/);
+  });
+
+  it('renders stored Birkenbihl translations and still keeps lines rows', () => {
+    const message = sourceMessageFromText({
+      id: 'm-es',
+      conversationId: 'c1',
+      authorId: 'bot',
+      sourceLang: 'es',
+      sourceText: '¿Por qué es así?',
+    });
+    const stored = '¿Por [Why] qué [is] es [it] así [so]?';
+    const view = renderViewpoint(
+      message,
+      [
+        { lineIndex: 0, targetLang: 'es', text: '¿Por qué es así?', mode: 'lines' },
+        { lineIndex: 0, targetLang: 'en', text: 'Why is it like that?', mode: 'lines' },
+        { lineIndex: 0, targetLang: 'en', text: stored, mode: 'birkenbihl' },
+      ],
+      { native: 'en', learning: 'es', displayMode: 'birkenbihl' }
+    );
+    expect(view[0].birkenbihl).toBe(stored);
+    expect(view[0].nativeText).toBe('Why is it like that?');
+  });
 });
 
 describe('birkenbihl', () => {

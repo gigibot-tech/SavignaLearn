@@ -48,7 +48,7 @@ export class InMemoryUserDirectory implements UserDirectoryPort {
 
   put(profile: PublicProfile) {
     const username = normalizeUsername(profile.username);
-    const email = profile.email ? normalizeEmail(profile.email) : undefined;
+    const email = profile.email ? normalizeEmail(profile.email) : '';
     this.profiles.set(profile.id, { ...profile, username, email });
   }
 
@@ -108,6 +108,7 @@ function toPublicProfile(row: {
     id: row.id,
     username,
     displayName: row.display_name || username,
+    email: '',
   };
 }
 
@@ -149,7 +150,10 @@ export async function lookupInDirectory(
   dir: UserDirectoryPort,
   parsed: ParsedFriendIdentifier
 ): Promise<PublicProfile | null> {
-  if (parsed.kind === 'email') return dir.findByEmail(parsed.email);
+  if (parsed.kind === 'email') {
+    const hit = await dir.findByEmail(parsed.email);
+    return hit ? { ...hit, email: parsed.email } : null;
+  }
   if (parsed.kind === 'user_id') {
     return (await dir.findById(parsed.userId)) ?? dir.findByUsername(parsed.userId);
   }

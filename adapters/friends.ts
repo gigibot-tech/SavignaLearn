@@ -15,15 +15,20 @@ import {
   dualDirectoryError,
   existingIncomingFrom,
   friendshipPairKey,
+  isDeletedPair,
   isDemoLearnerIdentity,
   isIcestormIdentity,
+  listFriendRows,
   normalizeEmail,
   normalizeUsername,
   parseFriendIdentifier,
   friendShareUrl,
+  profileEmail,
   seedMutualAccepted,
   validateFriendRequest,
+  type DirectoryPresence,
   type Friendship,
+  type FriendRow,
   type PublicProfile,
 } from '@/domain/friends';
 import type { FriendsRepository, UserDirectoryPort } from '@/ports/ports';
@@ -51,6 +56,7 @@ export type FriendsRepoOptions = {
 export class InMemoryFriendsRepository implements FriendsRepository {
   profiles = new Map<string, PublicProfile>();
   friendships: Friendship[] = [];
+  deletedPairs = new Set<string>();
   idoConfigured: boolean | undefined;
   idoDirectory: UserDirectoryPort;
 
@@ -67,8 +73,9 @@ export class InMemoryFriendsRepository implements FriendsRepository {
   }
 
   private putProfile(profile: PublicProfile) {
+    const email = profileEmail(profile);
+    if (!email) return;
     const username = normalizeUsername(profile.username);
-    const email = profile.email ? normalizeEmail(profile.email) : undefined;
     this.profiles.set(profile.id, { ...profile, username, email });
   }
 
@@ -149,19 +156,22 @@ export class InMemoryFriendsRepository implements FriendsRepository {
 
     const target = savigna!;
     if (target.id === LEARNING_BOT_USER_ID) throw new FriendRequestFailed('not_found');
+    const email = profileEmail(target) ?? (parsed.kind === 'email' ? parsed.email : null);
+    if (!email) throw new FriendRequestFailed('missing_email');
+    const resolved: PublicProfile = { ...target, email };
 
     const existing = await this.listFor(viewerId);
-    const incoming = existingIncomingFrom(existing, viewerId, target.id);
+    const incoming = existingIncomingFrom(existing, viewerId, resolved.id);
     if (incoming) {
       incoming.status = 'accepted';
       return incoming;
     }
-    const check = validateFriendRequest({ viewerId, target, existing });
+    const check = validateFriendRequest({ viewerId, target: resolved, existing });
     if (!check.ok) throw new FriendRequestFailed(check.error);
     const row: Friendship = {
       id: `fr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       requesterId: viewerId,
-      addresseeId: target.id,
+      addresseeId: resolved.id,
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
@@ -172,6 +182,11 @@ export class InMemoryFriendsRepository implements FriendsRepository {
   async accept(viewerId: string, friendshipId: string): Promise<void> {
     const row = this.friendships.find((item) => item.id === friendshipId);
     if (!row || row.addresseeId !== viewerId) throw new FriendRequestFailed('not_found');
+    const rows = await this.reconcile(viewerId);
+    const view = rows.find((item) => item.friendshipId === friendshipId);
+    if (view?.inconsistent) {
+      throw new FriendRequestFailed(view.inconsistency === 'missing_email' ? 'missing_email' : 'not_found');
+    }
     row.status = 'accepted';
   }
 
@@ -187,7 +202,32 @@ export class InMemoryFriendsRepository implements FriendsRepository {
     if (row.requesterId !== viewerId && row.addresseeId !== viewerId) {
       throw new FriendRequestFailed('not_found');
     }
+    this.deletedPairs.add(friendshipPairKey(row.requesterId, row.addresseeId));
     this.friendships = this.friendships.filter((item) => item.id !== friendshipId);
+  }
+
+  async reconcile(viewerId: string): Promise<FriendRow[]> {
+    const list = await this.listFor(viewerId);
+    const ids = [
+      ...new Set(list.flatMap((row) => [row.requesterId, row.addresseeId])),
+    ].filter((id) => id !== viewerId);
+    const presence = new Map<string, DirectoryPresence>();
+    const profiles: PublicProfile[] = [];
+    const idoConfigured = this.shouldCheckIdo();
+    for (const id of ids) {
+      const stored = this.profiles.get(id) ?? null;
+      const parsed = stored?.email
+        ? parseFriendIdentifier(stored.email)
+        : ({ kind: 'user_id', userId: id } as const);
+      const savigna =
+        stored ?? (await lookupInDirectory(this.savignaDirectory(), parsed));
+      const ido = idoConfigured
+        ? await lookupInDirectory(this.idoDirectory, parsed)
+        : savigna;
+      presence.set(id, { savigna, ido, idoConfigured });
+      if (savigna) profiles.push(savigna);
+    }
+    return listFriendRows(list, profiles, viewerId, presence);
   }
 
   /**
@@ -224,7 +264,7 @@ export class InMemoryFriendsRepository implements FriendsRepository {
       this.friendships.some(
         (row) =>
           friendshipPairKey(row.requesterId, row.addresseeId) === friendshipPairKey(viewerId, otherId)
-      );
+      ) || isDeletedPair(this.deletedPairs, viewerId, otherId);
     if (mira && !hasPair(mira.id)) {
       this.friendships.push({
         id: `seed-mira-${viewerId}`,
@@ -271,7 +311,13 @@ export class InMemoryFriendsRepository implements FriendsRepository {
     if (viewerIsLearner || viewerIsIce) {
       const learnerId = learnerProfile.id;
       const iceId = iceProfile.id;
-      seedMutualAccepted(this.friendships, learnerId, iceId, new Date().toISOString());
+      seedMutualAccepted(
+        this.friendships,
+        learnerId,
+        iceId,
+        new Date().toISOString(),
+        this.deletedPairs
+      );
     }
   }
 }

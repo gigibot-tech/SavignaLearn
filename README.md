@@ -20,6 +20,8 @@ npm test
 npm run web
 ```
 
+Web production on Netlify uses `npm run build:web` and publish directory **`dist/client`** (Expo `web.output: "server"`, not a Vite/`dist` SPA). See `docs/setup/netlify.md`.
+
 ## Layout
 
 | Path | Role |

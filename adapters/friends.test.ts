@@ -59,7 +59,12 @@ function fakeChat(seed: Conversation[] = []): ChatRepository {
 describe('InMemoryFriendsRepository', () => {
   it('adds by username, auto-accepts reverse pending, and lists', async () => {
     const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
-    await friends.registerProfile({ id: 'me', username: 'learner', displayName: 'Learner' });
+    await friends.registerProfile({
+      id: 'me',
+      username: 'learner',
+      displayName: 'Learner',
+      email: 'me@savigna.local',
+    });
     const sent = await friends.request('me', 'Jordan');
     expect(sent.status).toBe('pending');
     await expect(friends.request('me', 'jordan')).rejects.toMatchObject({ error: 'already_requested' });
@@ -92,11 +97,11 @@ describe('InMemoryFriendsRepository', () => {
 
   it('sends a request by user id and by share link', async () => {
     const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
-    await friends.registerProfile({ id: 'me', username: 'me', displayName: 'Me' });
+    await friends.registerProfile({ id: 'me', username: 'me', displayName: 'Me', email: 'me@savigna.local' });
     const byId = await friends.request('me', 'friend-jordan');
     expect(byId.addresseeId).toBe('friend-jordan');
     const friends2 = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
-    await friends2.registerProfile({ id: 'me', username: 'me', displayName: 'Me' });
+    await friends2.registerProfile({ id: 'me', username: 'me', displayName: 'Me', email: 'me@savigna.local' });
     const byLink = await friends2.request('me', 'https://savignalearn.app/friends?add=friend-mira');
     expect(byLink.addresseeId).toBe('friend-mira');
   });
@@ -194,6 +199,59 @@ describe('InMemoryFriendsRepository', () => {
       )
     ).toBe(true);
   });
+
+  it('does not insert a ghost when the email is unknown', async () => {
+    const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: true });
+    await friends.registerProfile({
+      id: 'me',
+      username: 'me',
+      displayName: 'Me',
+      email: 'me@savigna.local',
+    });
+    const before = friends.friendships.length;
+    await expect(friends.request('me', 'totally-fake@example.com')).rejects.toMatchObject({
+      error: 'not_found',
+    });
+    expect(friends.friendships).toHaveLength(before);
+    expect([...friends.profiles.values()].some((p) => p.email === 'totally-fake@example.com')).toBe(
+      false
+    );
+  });
+
+  it('marks a deleted account inconsistent and delete does not recreate it', async () => {
+    const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
+    friends.seedForViewer('me', { id: 'me', email: 'me@savigna.local' });
+    await friends.registerProfile({
+      id: 'me',
+      username: 'me',
+      displayName: 'Me',
+      email: 'me@savigna.local',
+    });
+    const miraId = 'friend-mira';
+    friends.profiles.delete(miraId);
+    const rows = await friends.reconcile('me');
+    const mira = rows.find((row) => row.userId === miraId);
+    expect(mira?.inconsistent).toBe(true);
+    expect(mira?.inconsistency).toBe('not_found');
+    await friends.remove('me', mira!.friendshipId);
+    expect((await friends.listFor('me')).some((row) => [row.requesterId, row.addresseeId].includes(miraId))).toBe(
+      false
+    );
+    expect((await friends.listFor(miraId)).some((row) => [row.requesterId, row.addresseeId].includes('me'))).toBe(
+      false
+    );
+    friends.seedForViewer('me', { id: 'me', email: 'me@savigna.local' });
+    expect((await friends.listFor('me')).some((row) => [row.requesterId, row.addresseeId].includes(miraId))).toBe(
+      false
+    );
+  });
+
+  it('directory entries always expose an email', async () => {
+    const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
+    const profiles = await friends.listProfiles(['friend-alex', 'friend-mira', 'friend-jordan', 'friend-icestormfroste', 'demo-user']);
+    expect(profiles.length).toBeGreaterThan(3);
+    expect(profiles.every((p) => p.email.includes('@'))).toBe(true);
+  });
 });
 
 describe('usernameFromUser', () => {
@@ -216,7 +274,12 @@ describe('findOrCreateDirectChat', () => {
         title: 'SavignasBoi',
       },
     ]);
-    const mira = { id: 'friend-mira', username: 'mira', displayName: 'Mira' };
+    const mira = {
+      id: 'friend-mira',
+      username: 'mira',
+      displayName: 'Mira',
+      email: 'mira@savigna.local',
+    };
     const first = await findOrCreateDirectChat(chat, { id: 'me' }, mira);
     const second = await findOrCreateDirectChat(chat, { id: 'me' }, mira);
     expect(first.id).toBe(second.id);
