@@ -1,8 +1,10 @@
 # Chat persistence
 
-**Default is this device.** Inbox and threads load from local KV (`savigna.chat.v1.<userId>` via `authStorage` / localStorage). An iDO JWT does **not** switch the inbox to `savigna_*`.
+**Human DMs are shared.** When iDO Auth is configured, a **non-Bot** thread (This chat · Cloud) is saved to `savigna_*`. Opening it uploads any leftover local history. Bot stays **This device** only.
 
-Cloud (`savigna_*` on iDO! Ai Trial) is opt-in per chat later. Schema is applied; the app must not query those tables on first paint.
+Inbox therefore lists **local + cloud**, then collapses extra rows for the same pair (stub `friend-icestormfroste` and icestorm’s live iDO id count as one person).
+
+A DM written only to the stub id is still migrated onto icestorm’s live id on hydrate (same browser). After a reload, both people should open the same `dm:` thread from cloud.
 
 `ChatContentCipher` is ready for a future AES adapter (`enc_version` / `enc_alg`, v0 = plaintext).
 
@@ -18,3 +20,7 @@ Chat persistence now uses **Repository + Routing Policy**:
 - `LocalFirstChatPolicy` decides the route. Today it keeps inbox/thread startup on local only and remembers which backend owns a conversation.
 
 That split keeps storage I/O inside adapters and keeps the selection rule separate, so a later per-chat "store this one in cloud" option can change policy/route state without rewriting the repositories.
+
+Delete-for-everyone tombstones `savigna_messages` (clears text). Delete-for-me is per user (`savigna_message_hides` + local snapshot). See `message-delete.md`.
+
+Per-user unread lives in the local snapshot (`unreadCounts`) and, for shared human DMs, `savigna_participants.unread_count`. Opening a thread calls `markConversationRead`.

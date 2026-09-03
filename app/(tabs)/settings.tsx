@@ -14,6 +14,7 @@ import {
   GradientScreen,
   useThemeColors,
 } from '@/features/chat/chatUi';
+import { AppearanceThemePicker } from '@/features/shell/AppearanceProvider';
 import { useNotifications } from '@/features/notifications/NotificationProvider';
 
 export default function SettingsScreen() {
@@ -73,6 +74,15 @@ export default function SettingsScreen() {
             fourSome {fourSomeEmail ? 'connected' : 'off'} · iDO {idoEmail ? 'connected' : 'off'}
           </Text>
           <Text style={{ color: colors.textMuted, marginTop: 6 }}>Density · {density}</Text>
+        </GlassPanel>
+
+        <GlassPanel colors={colors} style={[styles.card, { marginTop: 12 }]}>
+          <Text style={{ color: colors.text, fontWeight: '700' }}>Appearance</Text>
+          <Text style={{ color: colors.textMuted, marginTop: 6, fontSize: 13, lineHeight: 18 }}>
+            Rosa is the default. Orange keeps the previous ember look. Your choice is saved on this
+            device.
+          </Text>
+          <AppearanceThemePicker colors={colors} />
         </GlassPanel>
 
         {user ? (

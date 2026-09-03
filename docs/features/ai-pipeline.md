@@ -30,7 +30,7 @@ Pick **fourSome / On-prem / OpenAI / iDO / Demo** in **this chat** (header slide
 | **iDO** | ido-core Edge Function `ai-assist`. Requires an **iDO sign-in**. |
 | **Demo** | Scripted replies. |
 
-Dead backends are disabled. After connection tests, the app **auto-selects the first working non-demo backend** (On-prem → OpenAI → iDO → fourSome) and only stays on Demo when nothing else is up. iDO is probed against `ai-assist` (not just Auth health). OpenAI is probed with `GET /v1/models` (not `/api/openai/chat`). Zotero `runtime.lastError` is a browser extension, not these probes.
+Dead backends are disabled. After connection tests, the app **auto-selects the first working non-demo backend** (On-prem → OpenAI → iDO → fourSome) and only stays on Demo when nothing else is up. iDO is enabled when an **iDO session JWT** exists (Auth health + sign-in). Do not POST an empty `{ feature: 'generic' }` to `ai-assist` as a probe — the function requires `messages` or `prompt` and returns 400, which Chrome logs as a failed resource. OpenAI is probed with `GET /v1/models` (not `/api/openai/chat`). Zotero `runtime.lastError` is a browser extension, not these probes.
 
 ## WebGPU Gemma
 
@@ -39,7 +39,7 @@ Dead backends are disabled. After connection tests, the app **auto-selects the f
 ## Chat history + modes (TDD)
 
 - `ChatHistoryRecord` encapsulates message, Standard vs Birkenbihl mode, pipeline state, provider used.
-- State machine: `draft → detecting → translating → persisted` (or `failed`); mode switch only from idle states.
+- State machine: `draft → detecting → translating → persisted` (or `failed`); mode switch only from idle states. **Retry** may `start_detect` again from `persisted` / `failed`.
 - **Mode switch persistence:** `switch_mode` changes `translationMode` but **does not clear** stored translations. Standard `mode: 'lines'` rows stay when you leave and return. Source `sourceText` is never rewritten.
 - **Birkenbihl is a different prompt** (`buildBirkenbihlTranslatePrompt`): interlinear `original [hint]` per phrase in JSON. Do not reuse Standard bilingual lines as if they were Birkenbihl. Do not synthesize overlays with `createInterlinear` / word-split heuristics.
 - **Render:** `renderViewpoint` shows a Birkenbihl overlay only when a stored `mode: 'birkenbihl'` `LineTranslation` is real interlinear (`isUsableBirkenbihlOverlay`). Same-string / same-lang pairs are a parse failure (Retry), not two painted languages. If none, the bubble shows the original line only (no fake under-words). Empty overlay is OK; heuristic pairing / `createInterlinear` is not.
@@ -63,7 +63,9 @@ Retry is shown **on the bubble** (own and theirs; never stickers/images) when:
 
 Tapping **Retry** runs `retryBubbleTranslations` for **that message only**:
 
-- Standard user/partner: `processOutgoingTranslation` (bilingual JSON / detect-then-translate). Merges `lines` rows; leaves Birkenbihl rows and **does not rewrite `sourceText`**.
+- **Re-detects** source language (the history machine allows `persisted` → `start_detect`). A Spanish line tagged `EN` is the usual Language mismatch trap: Retry used to skip detect and translate “English” → L2, which copies the Spanish and stays mismatched.
+- Drops Standard rows that only copy `sourceText` into the detected source lang.
+- Standard user/partner: `processOutgoingTranslation` / per-side translate using the **detected** lang. Merges `lines` rows; leaves Birkenbihl rows and **does not rewrite `sourceText`**. May retag `sourceLang` on the message.
 - SavignasBoi: `completeBilingualBotReply({ pairExisting: true })` (JSON `learning_text` + `native_text` of the existing bubble, not a new reply). Fallback: `processOutgoingTranslation`.
 - Birkenbihl mode: `recalculateBirkenbihlForMessage` (dedicated interlinear prompt).
 

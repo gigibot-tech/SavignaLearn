@@ -6,12 +6,17 @@ import {
   ICESTORM_PROFILE_ID,
   IDO_LEARN_EMAIL,
   IDO_LEARN_USER_ID,
+  IDO_SAVINA_EMAIL,
+  IDO_SAVINA_USER_ID,
+  ambiguousUsernames,
   dualDirectoryError,
   existingIncomingFrom,
+  friendIdentitySubtitle,
   friendRequestErrorMessage,
   friendSharePath,
   friendShareUrl,
   friendshipPairKey,
+  inboxPartnerTitle,
   isDemoLearnerIdentity,
   kindForViewer,
   listFriendRows,
@@ -19,10 +24,13 @@ import {
   parseFriendIdentifier,
   parseFriendShareInput,
   profileEmail,
+  publicIdentityCopyValue,
+  publicIdentityLabel,
   seedMutualAccepted,
   friendInconsistency,
   friendInconsistencyMessage,
   isDeletedPair,
+  usernameFromEmail,
   validateFriendRequest,
   type Friendship,
   type PublicProfile,
@@ -228,6 +236,7 @@ describe('seedMutualAccepted learner ↔ icestormfroste', () => {
   it('treats the iDO learn@savigna.local user as the demo learner', () => {
     expect(isDemoLearnerIdentity({ email: IDO_LEARN_EMAIL })).toBe(true);
     expect(isDemoLearnerIdentity({ id: IDO_LEARN_USER_ID })).toBe(true);
+    expect(isDemoLearnerIdentity({ email: 'learn@savina.special' })).toBe(true);
   });
 });
 
@@ -261,6 +270,8 @@ describe('listFriendRows', () => {
     );
     expect(rows.map((r) => r.kind)).toEqual(['incoming', 'outgoing', 'accepted']);
     expect(rows.every((r) => r.email.includes('@'))).toBe(true);
+    expect(rows.find((r) => r.username === 'mira')?.handleLabel).toMatch(/@mira/);
+    expect(rows.find((r) => r.username === 'jordan')?.createdAt).toBe('2026-01-01T00:00:00.000Z');
     expect(kindForViewer(pending(alex.id, me), me)).toBe('incoming');
   });
 
@@ -313,5 +324,79 @@ describe('friendRequestErrorMessage', () => {
     expect(friendRequestErrorMessage('empty')).toMatch(/email/i);
     expect(friendRequestErrorMessage('missing_email')).toMatch(/email/i);
     expect(friendRequestErrorMessage('self')).toMatch(/you/i);
+    expect(friendRequestErrorMessage('username_ambiguous')).toMatch(/email/i);
+  });
+});
+
+describe('duplicate usernames fall back to email', () => {
+  const learn: PublicProfile = {
+    id: IDO_LEARN_USER_ID,
+    username: 'learn',
+    displayName: 'Learn',
+    email: IDO_LEARN_EMAIL,
+  };
+  const savinaAsLearn: PublicProfile = {
+    id: IDO_SAVINA_USER_ID,
+    username: 'learn',
+    displayName: 'Learn',
+    email: IDO_SAVINA_EMAIL,
+  };
+  const savina: PublicProfile = {
+    id: IDO_SAVINA_USER_ID,
+    username: 'savina',
+    displayName: 'Learn',
+    email: IDO_SAVINA_EMAIL,
+  };
+
+  it('treats same-email stub and live ids as one person', () => {
+    expect(
+      ambiguousUsernames([
+        { id: 'stub', username: 'learner', displayName: 'Learner', email: 'learner@savigna.local' },
+        { id: 'live', username: 'learner', displayName: 'Learner', email: 'learner@savigna.local' },
+      ]).has('learner')
+    ).toBe(false);
+  });
+
+  it('flags @learn when two emails share it', () => {
+    expect(ambiguousUsernames([learn, savinaAsLearn]).has('learn')).toBe(true);
+    expect(friendIdentitySubtitle(savinaAsLearn, [learn, savinaAsLearn])).toBe(IDO_SAVINA_EMAIL);
+    expect(publicIdentityLabel(learn, [learn, savinaAsLearn])).toBe(IDO_LEARN_EMAIL);
+    expect(publicIdentityCopyValue(learn, [learn, savinaAsLearn])).toBe(IDO_LEARN_EMAIL);
+    expect(inboxPartnerTitle(savinaAsLearn, [learn, savinaAsLearn])).toBe(IDO_SAVINA_EMAIL);
+  });
+
+  it('uses email as the inbox title when display names collide', () => {
+    expect(inboxPartnerTitle(savina, [learn, savina])).toBe(IDO_SAVINA_EMAIL);
+    expect(friendIdentitySubtitle(savina, [learn, savina])).toMatch(/@savina/);
+  });
+
+  it('keeps documented handles for known emails', () => {
+    expect(usernameFromEmail(IDO_SAVINA_EMAIL)).toBe('savina');
+    expect(usernameFromEmail(IDO_LEARN_EMAIL)).toBe('learn');
+  });
+
+  it('labels friend rows with email when the handle is shared', () => {
+    const rows = listFriendRows(
+      [
+        {
+          id: 'a',
+          requesterId: me,
+          addresseeId: learn.id,
+          status: 'accepted',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'b',
+          requesterId: me,
+          addresseeId: savinaAsLearn.id,
+          status: 'accepted',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+      [learn, savinaAsLearn],
+      me
+    );
+    expect(rows.map((row) => row.handleLabel).sort()).toEqual([IDO_LEARN_EMAIL, IDO_SAVINA_EMAIL].sort());
+    expect(rows.map((row) => row.inboxTitle).sort()).toEqual([IDO_LEARN_EMAIL, IDO_SAVINA_EMAIL].sort());
   });
 });

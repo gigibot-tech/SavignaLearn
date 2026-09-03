@@ -12,7 +12,9 @@ import type {
   ReceiptStatus,
   SourceMessage,
 } from '@/domain/chat';
-import { conversationPreviewFor, mediaKindOf } from '@/domain/chat';
+import { conversationPreviewFor, DELETED_FOR_EVERYONE_COPY, mediaKindOf } from '@/domain/chat';
+import { canDeleteForEveryone, previewAfterDelete, tombstoneMessage } from '@/domain/messageDelete';
+import { unreadRecipients } from '@/domain/unread';
 import type { AuthPort, AuthUser, ChatContentCipher, ChatRepository } from '@/ports/ports';
 import { MixedAuthAdapter, isMixedIdentityConfigured } from '@/adapters/mixedAuth';
 import { supabaseAuthClientOptions } from '@/adapters/supabaseClientOptions';
@@ -195,6 +197,11 @@ async function rowToMessage(row: MessageRow, cipher: ChatContentCipher): Promise
   };
 }
 
+function isMissingRelation(error: { message?: string; code?: string } | null): boolean {
+  const message = error?.message ?? '';
+  return error?.code === '42P01' || /savigna_message_hides|does not exist/i.test(message);
+}
+
 /** Realtime ChatRepository against savigna_* tables (iDO Auth project). */
 export class SupabaseChatRepository implements ChatRepository {
   constructor(
@@ -223,7 +230,7 @@ export class SupabaseChatRepository implements ChatRepository {
       .select('*')
       .in('conversation_id', ids);
 
-    return (conversations ?? []).map((c) => {
+    const mapped = (conversations ?? []).map((c) => {
       const mine = (parts ?? []).find((p) => p.conversation_id === c.id);
       const participants = (allParts ?? [])
         .filter((p) => p.conversation_id === c.id)
@@ -245,6 +252,7 @@ export class SupabaseChatRepository implements ChatRepository {
         unreadCount: (mine?.unread_count as number) ?? 0,
       } satisfies Conversation;
     });
+    return this.overlayViewerPreviews(mapped, userId);
   }
 
   async getConversation(id: string): Promise<Conversation | null> {
@@ -256,17 +264,33 @@ export class SupabaseChatRepository implements ChatRepository {
   }
 
   async createConversation(input: {
+    id?: string;
     participantIds: string[];
     participants: Conversation['participants'];
     aiEnabled: boolean;
     title?: string;
   }): Promise<Conversation> {
+    if (input.id) {
+      const existing = await this.getConversation(input.id);
+      if (existing) return existing;
+    }
+    const insert: Record<string, unknown> = {
+      ai_enabled: input.aiEnabled,
+      title: input.title ?? null,
+    };
+    if (input.id) insert.id = input.id;
     const { data: conv, error } = await this.client
       .from('savigna_conversations')
-      .insert({ ai_enabled: input.aiEnabled, title: input.title ?? null })
+      .insert(insert)
       .select('*')
       .single();
-    if (error || !conv) throw error ?? new Error('create conversation failed');
+    if (error || !conv) {
+      if (input.id && (error?.code === '23505' || /duplicate/i.test(error?.message ?? ''))) {
+        const raced = await this.getConversation(input.id);
+        if (raced) return raced;
+      }
+      throw error ?? new Error('create conversation failed');
+    }
 
     const rows = input.participants.map((p) => ({
       conversation_id: conv.id,
@@ -323,7 +347,30 @@ export class SupabaseChatRepository implements ChatRepository {
       })
       .select('*')
       .single();
-    if (error || !data) throw error ?? new Error('append failed');
+    if (error || !data) {
+      if (message.id && (error?.code === '23505' || /duplicate/i.test(error?.message ?? ''))) {
+        const { data: existing } = await this.client
+          .from('savigna_messages')
+          .select('*')
+          .eq('id', message.id)
+          .maybeSingle();
+        if (existing) {
+          const current = await rowToMessage(existing as MessageRow, this.cipher);
+          if (message.deletedAt && !current.deletedAt) {
+            return this.applyTombstone(message);
+          }
+          if (message.sourceLang && message.sourceLang !== current.sourceLang) {
+            const { error: patchError } = await this.client
+              .from('savigna_messages')
+              .update({ source_lang: message.sourceLang })
+              .eq('id', message.id);
+            if (!patchError) return { ...current, sourceLang: message.sourceLang };
+          }
+          return current;
+        }
+      }
+      throw error ?? new Error('append failed');
+    }
 
     await this.client
       .from('savigna_conversations')
@@ -333,7 +380,72 @@ export class SupabaseChatRepository implements ChatRepository {
       })
       .eq('id', message.conversationId);
 
+    if (!message.deletedAt) {
+      await this.bumpUnread(message.conversationId, message.authorId);
+    }
+
     return rowToMessage(data as MessageRow, this.cipher);
+  }
+
+  async deleteMessage(input: {
+    messageId: string;
+    conversationId: string;
+    actorId: string;
+    scope: 'me' | 'everyone';
+    viewerIds?: string[];
+  }): Promise<SourceMessage | null> {
+    if (input.scope === 'me') {
+      const { error } = await this.client.from('savigna_message_hides').upsert(
+        {
+          user_id: input.actorId,
+          message_id: input.messageId,
+          conversation_id: input.conversationId,
+        },
+        { onConflict: 'user_id,message_id' }
+      );
+      if (error) throw error;
+      const { data } = await this.client
+        .from('savigna_messages')
+        .select('*')
+        .eq('id', input.messageId)
+        .maybeSingle();
+      return data ? rowToMessage(data as MessageRow, this.cipher) : null;
+    }
+
+    const { data: existing } = await this.client
+      .from('savigna_messages')
+      .select('*')
+      .eq('id', input.messageId)
+      .maybeSingle();
+    if (!existing) return null;
+    const message = await rowToMessage(existing as MessageRow, this.cipher);
+    if (!canDeleteForEveryone(message, input.viewerIds ?? [input.actorId])) {
+      throw new Error('Cannot delete this message for everyone');
+    }
+    return this.applyTombstone(message);
+  }
+
+  async listHiddenMessageIds(userId: string): Promise<string[]> {
+    const { data, error } = await this.client
+      .from('savigna_message_hides')
+      .select('message_id')
+      .eq('user_id', userId);
+    if (error) {
+      if (isMissingRelation(error)) return [];
+      throw error;
+    }
+    return (data ?? []).map((row) => row.message_id as string);
+  }
+
+  async markConversationRead(conversationId: string, userIds: string[]): Promise<void> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    if (unique.length === 0) return;
+    const { error } = await this.client
+      .from('savigna_participants')
+      .update({ unread_count: 0 })
+      .eq('conversation_id', conversationId)
+      .in('user_id', unique);
+    if (error) throw error;
   }
 
   async updateReceipt(messageId: string, receipt: ReceiptStatus): Promise<void> {
@@ -415,10 +527,105 @@ export class SupabaseChatRepository implements ChatRepository {
           void this.listMessages(conversationId).then(onChange);
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'savigna_message_hides',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        () => {
+          void this.listMessages(conversationId).then(onChange);
+        }
+      )
       .subscribe();
     return () => {
       void this.client.removeChannel(channel);
     };
+  }
+
+  private async applyTombstone(message: SourceMessage): Promise<SourceMessage> {
+    const tombstone = tombstoneMessage(message);
+    const sealed = await this.cipher.seal('');
+    const encryptLines = this.cipher.alg !== 'none';
+    const sealedLines = encryptLines ? await this.cipher.seal(JSON.stringify(tombstone.lines)) : null;
+    const { error } = await this.client
+      .from('savigna_messages')
+      .update({
+        deleted_at: tombstone.deletedAt,
+        source_text: sealed.ciphertext,
+        enc_version: sealed.encVersion,
+        enc_alg: sealed.encAlg,
+        lines: encryptLines ? [] : tombstone.lines,
+        lines_cipher: sealedLines?.ciphertext ?? null,
+      })
+      .eq('id', message.id)
+      .eq('author_id', message.authorId);
+    if (error) throw error;
+    await this.client.from('savigna_line_translations').delete().eq('message_id', message.id);
+    const messages = await this.listMessages(message.conversationId);
+    const last = messages[messages.length - 1];
+    await this.client
+      .from('savigna_conversations')
+      .update({
+        last_message_preview: last ? conversationPreviewFor(last) : DELETED_FOR_EVERYONE_COPY,
+        updated_at: tombstone.deletedAt,
+      })
+      .eq('id', message.conversationId);
+    return tombstone;
+  }
+
+  private async bumpUnread(conversationId: string, authorId: string): Promise<void> {
+    const { data, error } = await this.client
+      .from('savigna_participants')
+      .select('user_id, unread_count')
+      .eq('conversation_id', conversationId);
+    if (error || !data) return;
+    const targets = unreadRecipients(
+      data.map((row) => row.user_id as string),
+      authorId
+    );
+    for (const userId of targets) {
+      const current = data.find((row) => row.user_id === userId);
+      const next = (current?.unread_count as number | undefined ?? 0) + 1;
+      await this.client
+        .from('savigna_participants')
+        .update({ unread_count: next })
+        .eq('conversation_id', conversationId)
+        .eq('user_id', userId);
+    }
+  }
+
+  private async overlayViewerPreviews(
+    conversations: Conversation[],
+    userId: string
+  ): Promise<Conversation[]> {
+    if (conversations.length === 0) return conversations;
+    const hidden = new Set(await this.listHiddenMessageIds(userId).catch(() => []));
+    if (hidden.size === 0) return conversations;
+    const ids = conversations.map((item) => item.id);
+    const { data, error } = await this.client
+      .from('savigna_messages')
+      .select('*')
+      .in('conversation_id', ids)
+      .order('created_at', { ascending: true });
+    if (error || !data) return conversations;
+    const byConv = new Map<string, SourceMessage[]>();
+    for (const row of data) {
+      const message = await rowToMessage(row as MessageRow, this.cipher);
+      const list = byConv.get(message.conversationId) ?? [];
+      list.push(message);
+      byConv.set(message.conversationId, list);
+    }
+    return conversations.map((conversation) => ({
+      ...conversation,
+      lastMessagePreview: previewAfterDelete(
+        byConv.get(conversation.id) ?? [],
+        hidden,
+        conversationPreviewFor
+      ),
+    }));
   }
 }
 

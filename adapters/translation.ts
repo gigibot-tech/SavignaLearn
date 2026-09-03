@@ -6,6 +6,7 @@
 
 import {
   assembleLineTranslations,
+  normalizeLanguageCode,
   planLineJobs,
   shouldTranslateMessage,
   splitSourceLines,
@@ -20,6 +21,7 @@ import {
   buildDetectThenTranslatePrompt,
   buildTranslationPayload,
   createChatHistoryRecord,
+  dropIdentityLineTranslations,
   extractChatReplyText,
   hasBirkenbihlTranslation,
   lineTranslationsFromBilingual,
@@ -142,6 +144,9 @@ export class EchoTranslationEngine implements TranslationEngine {
 
   async detectLanguage(text: string): Promise<string> {
     if (/[äöüß]/i.test(text) || /\b(und|ich|nicht|guten)\b/i.test(text)) return 'de';
+    if (/[ñ¿¡]/i.test(text) || /[áíóú]/i.test(text) || /\b(está|también|después|porque)\b/i.test(text)) {
+      return 'es';
+    }
     if (/[àâçéèêëîïôùûüÿœæ]/i.test(text) || /\b(je|vous|bonjour)\b/i.test(text)) return 'fr';
     if (/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(text)) return 'ja';
     return this.defaultLang;
@@ -630,7 +635,10 @@ export async function processOutgoingTranslation(input: {
     asymmetric: input.asymmetric,
   });
 
-  let record = createChatHistoryRecord({ message: input.message, translationMode: mode });
+  const prior = await input.historyStore.get(input.message.id);
+  let record = prior
+    ? { ...prior, message: input.message, translationMode: mode }
+    : createChatHistoryRecord({ message: input.message, translationMode: mode });
   record = transitionChatHistory(record, { type: 'start_detect' });
   await input.historyStore.save(record);
 
@@ -918,7 +926,8 @@ export async function retryBubbleTranslations(input: {
     )?.text;
 
   const computeReplaceTargets = (
-    reason: TranslationMismatchReason | null | undefined
+    reason: TranslationMismatchReason | null | undefined,
+    working: LineTranslation[]
   ): { replaceLearning: boolean; replaceNative: boolean } => {
     if (!reason || reason === 'empty_pair') return { replaceLearning: true, replaceNative: true };
     if (reason === 'missing_learning') return { replaceLearning: true, replaceNative: false };
@@ -937,17 +946,15 @@ export async function retryBubbleTranslations(input: {
       for (const [lineIndex, line] of input.message.lines.entries()) {
         const sourceLine = line.content.trim().toLowerCase();
         if (needsLearning) {
-          const existing = storedLineText(input.existingTranslations, lineIndex, input.learningLang);
+          const existing = storedLineText(working, lineIndex, input.learningLang);
           if (existing?.trim().toLowerCase() === sourceLine) replaceLearning = true;
         }
         if (needsNative) {
-          const existing = storedLineText(input.existingTranslations, lineIndex, input.nativeLang);
+          const existing = storedLineText(working, lineIndex, input.nativeLang);
           if (existing?.trim().toLowerCase() === sourceLine) replaceNative = true;
         }
         if (replaceLearning && replaceNative) break;
       }
-      // If we couldn't identify which side to refresh, default to the safe option.
-      if (!replaceLearning && !replaceNative) return { replaceLearning: true, replaceNative: true };
       return { replaceLearning, replaceNative };
     }
 
@@ -956,21 +963,34 @@ export async function retryBubbleTranslations(input: {
   };
 
   try {
+    let detected = input.message.sourceLang;
+    try {
+      detected = normalizeLanguageCode(await input.engine.detectLanguage(sourceText));
+    } catch {
+      // Keep the stored tag if detect fails.
+    }
+    input.message.sourceLang = detected;
+    const existing = dropIdentityLineTranslations(
+      input.existingTranslations,
+      sourceText,
+      detected
+    );
+
     if (display === 'birkenbihl') {
       const next = await recalculateBirkenbihlForMessage({
         message: input.message,
-        existingTranslations: input.existingTranslations,
+        existingTranslations: existing,
         asymmetric: input.asymmetric,
         engine: input.engine,
         hintLang: input.nativeLang,
         historyStore: input.historyStore,
-        knownSourceLang: input.message.sourceLang,
+        knownSourceLang: detected,
       });
       return next;
     }
 
     let incoming: LineTranslation[] = [];
-    const { replaceLearning, replaceNative } = computeReplaceTargets(input.mismatchReason);
+    const { replaceLearning, replaceNative } = computeReplaceTargets(input.mismatchReason, existing);
     if (input.completion) {
       const leaked = parseBilingualChatJson(
         sourceText,
@@ -1001,7 +1021,16 @@ export async function retryBubbleTranslations(input: {
     }
 
     if (incoming.length === 0) {
-      if (!replaceLearning && !replaceNative) return input.existingTranslations;
+      if (!replaceLearning && !replaceNative) {
+        await persistCompletedHistory({
+          store: input.historyStore,
+          message: input.message,
+          translations: existing,
+          mode: 'standard',
+          providerUsed: providerFromEngine(input.engine),
+        });
+        return existing;
+      }
 
       const next: LineTranslation[] = [];
       if (replaceLearning) {
@@ -1046,8 +1075,8 @@ export async function retryBubbleTranslations(input: {
       // If we don't know the mismatch reason, keep prior behavior: refresh the whole side.
       if (!reason) return true;
 
-      const existing = storedLineText(input.existingTranslations, row.lineIndex, row.targetLang);
-      const existingTrim = existing?.trim().toLowerCase() ?? '';
+      const existingRow = storedLineText(existing, row.lineIndex, row.targetLang);
+      const existingTrim = existingRow?.trim().toLowerCase() ?? '';
       const sourceLine = sourceLineFor(row.lineIndex);
 
       switch (reason) {
@@ -1064,9 +1093,23 @@ export async function retryBubbleTranslations(input: {
           return true;
       }
     });
-    if (incomingFiltered.length === 0) return input.existingTranslations;
+    const incomingClean = dropIdentityLineTranslations(
+      incomingFiltered,
+      sourceText,
+      detected
+    );
+    if (incomingClean.length === 0) {
+      await persistCompletedHistory({
+        store: input.historyStore,
+        message: input.message,
+        translations: existing,
+        mode: 'standard',
+        providerUsed: providerFromEngine(input.engine),
+      });
+      return existing;
+    }
 
-    const merged = mergeLineTranslations(input.existingTranslations, incomingFiltered);
+    const merged = mergeLineTranslations(existing, incomingClean);
     await persistCompletedHistory({
       store: input.historyStore,
       message: input.message,

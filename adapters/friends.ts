@@ -3,40 +3,45 @@
  * mutual learner@ ↔ icestormfroste@gmail.com. Meetups are not modeled here.
  */
 
-import { LEARNING_BOT_USER_ID } from '@/domain/chat';
+import { LEARNING_BOT_DISPLAY_NAME, LEARNING_BOT_USER_ID, directConversationId, humanDirectPairKey, isLearningBotConversation, otherParticipantId, type Conversation } from '@/domain/chat';
 import {
   DEMO_LEARNER_EMAIL,
   DEMO_LEARNER_ID,
   DEMO_LEARNER_IDO_USER_ID,
   IDO_LEARN_EMAIL,
   IDO_LEARN_USER_ID,
+  IDO_SAVINA_USER_ID,
   FriendRequestFailed,
   FRIEND_SHARE_ORIGIN,
   ICESTORM_EMAIL,
   ICESTORM_PROFILE_ID,
   ICESTORM_USERNAME,
+  canonicalChatActorId,
   dualDirectoryError,
   existingIncomingFrom,
   friendshipPairKey,
   isDeletedPair,
   isDemoLearnerIdentity,
   isIcestormIdentity,
+  inboxPartnerTitle,
   listFriendRows,
   normalizeEmail,
   normalizeUsername,
   parseFriendIdentifier,
   friendShareUrl,
   profileEmail,
+  publicIdentityCopyValue,
+  publicIdentityLabel,
   seedMutualAccepted,
+  uniqueProfilesByPerson,
+  usernameFromEmail,
   validateFriendRequest,
   type DirectoryPresence,
   type Friendship,
   type FriendRow,
   type PublicProfile,
 } from '@/domain/friends';
-import type { FriendsRepository, UserDirectoryPort } from '@/ports/ports';
-import type { Conversation } from '@/domain/chat';
-import type { ChatRepository } from '@/ports/ports';
+import type { FriendsRepository, UserDirectoryPort, ChatRepository } from '@/ports/ports';
 import {
   DEMO_DIRECTORY_PROFILES,
   InMemoryUserDirectory,
@@ -131,9 +136,12 @@ export class InMemoryFriendsRepository implements FriendsRepository {
   }
 
   async findByUsername(username: string): Promise<PublicProfile | null> {
-    const needle = normalizeUsername(username);
-    if (!needle) return null;
-    return [...this.profiles.values()].find((item) => item.username === needle) ?? null;
+    const hits = uniqueProfilesByPerson(
+      [...this.profiles.values()].filter(
+        (item) => item.username === normalizeUsername(username)
+      )
+    );
+    return hits.length === 1 ? hits[0] : null;
   }
 
   async listFor(viewerId: string): Promise<Friendship[]> {
@@ -150,6 +158,18 @@ export class InMemoryFriendsRepository implements FriendsRepository {
     const parsed = parseFriendIdentifier(identifier);
     if (parsed.kind === 'empty') throw new FriendRequestFailed('empty');
     if (parsed.kind === 'malformed') throw new FriendRequestFailed('malformed_link');
+
+    if (parsed.kind === 'username') {
+      const savignaHits = uniqueProfilesByPerson(
+        await this.savignaDirectory().listByUsername(parsed.username)
+      );
+      const idoHits = this.shouldCheckIdo()
+        ? uniqueProfilesByPerson(await this.idoDirectory.listByUsername(parsed.username))
+        : savignaHits;
+      if (uniqueProfilesByPerson([...savignaHits, ...idoHits]).length > 1) {
+        throw new FriendRequestFailed('username_ambiguous');
+      }
+    }
 
     const savigna = await lookupInDirectory(this.savignaDirectory(), parsed);
     const idoConfigured = this.shouldCheckIdo();
@@ -231,7 +251,7 @@ export class InMemoryFriendsRepository implements FriendsRepository {
       presence.set(id, { savigna, ido, idoConfigured });
       if (savigna) profiles.push(savigna);
     }
-    return listFriendRows(list, profiles, viewerId, presence);
+    return listFriendRows(list, profiles, viewerId, presence, this.profiles.values());
   }
 
   /**
@@ -321,6 +341,7 @@ export class InMemoryFriendsRepository implements FriendsRepository {
         DEMO_LEARNER_ID,
         DEMO_LEARNER_IDO_USER_ID,
         IDO_LEARN_USER_ID,
+        IDO_SAVINA_USER_ID,
       ]);
       if (viewerIsLearner) learnerIds.add(viewerId);
       const at = new Date().toISOString();
@@ -339,12 +360,41 @@ export function createFriendsRepository(): FriendsRepository {
 }
 
 export function usernameFromUser(user: { id: string; email?: string; displayName?: string }): string {
+  if (user.email) {
+    const fromEmail = usernameFromEmail(user.email);
+    if (fromEmail) return fromEmail;
+  }
   if (user.displayName && !user.displayName.includes('@')) {
     return normalizeUsername(user.displayName.replace(/\s+/g, ''));
   }
-  const local = user.email?.split('@')[0];
-  if (local) return normalizeUsername(local);
   return `savigna${user.id.slice(-4)}`;
+}
+
+export function publicHandleForUser(user: { id: string; email?: string; displayName?: string }): string {
+  const username = usernameFromUser(user);
+  const email = user.email ? normalizeEmail(user.email) : '';
+  return publicIdentityLabel({ username, email }, memoryFriends.profiles.values());
+}
+
+export function publicHandleCopyValue(user: { id: string; email?: string; displayName?: string }): string {
+  const username = usernameFromUser(user);
+  const email = user.email ? normalizeEmail(user.email) : '';
+  return publicIdentityCopyValue({ username, email }, memoryFriends.profiles.values());
+}
+
+export function conversationTitleFor(
+  conversation: Conversation | null | undefined,
+  viewerIds: string[],
+  fallback = 'Chat'
+): string {
+  if (!conversation) return fallback;
+  if (isLearningBotConversation(conversation)) {
+    return conversation.title ?? LEARNING_BOT_DISPLAY_NAME;
+  }
+  const otherId = otherParticipantId(conversation, viewerIds);
+  const profile = otherId ? memoryFriends.profiles.get(otherId) : undefined;
+  if (profile) return inboxPartnerTitle(profile, memoryFriends.profiles.values());
+  return conversation.title ?? fallback;
 }
 
 export function currentFriendShareUrl(userId: string): string {
@@ -360,29 +410,33 @@ export async function findOrCreateDirectChat(
   viewer: { id: string; nativeLang?: string; learningLang?: string },
   other: PublicProfile
 ): Promise<Conversation> {
+  const viewerId = canonicalChatActorId(viewer.id);
+  const otherId = canonicalChatActorId(other.id);
+  const canonicalId = directConversationId(viewerId, otherId);
+  const pair = humanDirectPairKey([viewerId, otherId], canonicalChatActorId);
   const existing = await chat.listConversations(viewer.id);
   const found = existing.find((item) => {
     if (item.participantIds.includes(LEARNING_BOT_USER_ID)) return false;
-    return (
-      item.participantIds.includes(viewer.id) && item.participantIds.includes(other.id)
-    );
+    if (item.id === canonicalId) return true;
+    return humanDirectPairKey(item.participantIds, canonicalChatActorId) === pair;
   });
   if (found) return found;
   return chat.createConversation({
-    participantIds: [viewer.id, other.id],
+    id: canonicalId,
+    participantIds: [viewerId, otherId],
     participants: [
       {
-        userId: viewer.id,
+        userId: viewerId,
         nativeLang: viewer.nativeLang ?? 'en',
         learningLang: viewer.learningLang ?? 'de',
       },
       {
-        userId: other.id,
+        userId: otherId,
         nativeLang: 'de',
         learningLang: 'en',
       },
     ],
     aiEnabled: true,
-    title: other.displayName,
+    title: inboxPartnerTitle({ ...other, id: otherId }, memoryFriends.profiles.values()),
   });
 }

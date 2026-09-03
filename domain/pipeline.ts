@@ -7,6 +7,8 @@ import type { DisplayMode, LanguageCode, LineTranslation, SourceMessage } from '
 import { LEARNING_BOT_DISPLAY_NAME, splitSourceLines } from './chat';
 import { isUsableBirkenbihlOverlay } from './text';
 
+export type { TranslationMismatchReason } from './chat';
+
 /** Story alias: Standard = lines mode. */
 export type TranslationMode = 'standard' | 'birkenbihl';
 
@@ -392,6 +394,22 @@ export function mergeLineTranslations(
   return [...byKey.values()];
 }
 
+/** Drop Standard rows that just copy source into the source language (false L2 “translations”). */
+export function dropIdentityLineTranslations(
+  translations: readonly LineTranslation[],
+  sourceText: string,
+  sourceLang: LanguageCode
+): LineTranslation[] {
+  const src = sourceText.trim();
+  const lang = sourceLang.toLowerCase();
+  if (!src || !lang) return [...translations];
+  return translations.filter((row) => {
+    if (row.mode !== 'lines') return true;
+    if (row.targetLang.toLowerCase() !== lang) return true;
+    return row.text.trim() !== src;
+  });
+}
+
 export function mergeTranslationMaps(
   existing: Record<string, LineTranslation[]>,
   incoming: Record<string, LineTranslation[]>
@@ -470,12 +488,12 @@ export function transitionChatHistory(
     };
   }
 
+  /** Bubble Retry: re-enter detect from persisted/failed (and restart an in-flight run). */
+  if (event.type === 'start_detect') {
+    return { ...record, pipelineState: 'detecting', lastError: undefined, updatedAt };
+  }
+
   switch (record.pipelineState) {
-    case 'draft':
-      if (event.type === 'start_detect') {
-        return { ...record, pipelineState: 'detecting', updatedAt, lastError: undefined };
-      }
-      break;
     case 'detecting':
       if (event.type === 'start_translate') {
         return {
@@ -514,18 +532,6 @@ export function transitionChatHistory(
       if (event.type === 'fail') {
         return { ...record, pipelineState: 'failed', lastError: event.error, updatedAt };
       }
-      break;
-    case 'failed':
-      if (event.type === 'start_detect') {
-        return {
-          ...record,
-          pipelineState: 'detecting',
-          lastError: undefined,
-          updatedAt,
-        };
-      }
-      break;
-    case 'persisted':
       break;
   }
 

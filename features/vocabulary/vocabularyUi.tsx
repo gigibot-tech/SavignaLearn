@@ -6,8 +6,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { LearningItem } from '@/domain/learning';
 import type { ThemeColors } from '@/constants/Colors';
-import { tokens } from '@/constants/Colors';
 import { listTippedVocabularyCards } from '@/adapters/vocabulary';
+import { chatPersistenceUserId } from '@/adapters/identity';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { useVocabCardFromTap } from '@/features/vocabulary/CreateVocabCardModal';
 
@@ -87,7 +87,7 @@ export function TippedVocabRail({
             </Text>
             {item.languageLevel ? (
               <View style={[railStyles.level, { backgroundColor: colors.accentSoft }]}>
-                <Text style={[railStyles.levelText, { color: tokens.ember }]}>{item.languageLevel}</Text>
+                <Text style={[railStyles.levelText, { color: colors.accent }]}>{item.languageLevel}</Text>
               </View>
             ) : null}
           </Pressable>
@@ -102,12 +102,12 @@ export function TippedVocabHome({ colors }: { colors: ThemeColors }) {
   const { user } = useAuthState();
   const { learningItems, vocabularyCards } = useServices();
   const { modal, openSavedCard } = useVocabCardFromTap({
-    userId: user?.id,
+    userId: user ? chatPersistenceUserId(user) : undefined,
     cards: vocabularyCards,
     items: learningItems,
     colors,
   });
-  const cards = useTippedVocabularyCards(user?.id);
+  const cards = useTippedVocabularyCards(user ? chatPersistenceUserId(user) : undefined);
 
   return (
     <View style={railStyles.home}>

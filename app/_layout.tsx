@@ -9,11 +9,11 @@ import { ensureLearningBotChat } from '@/adapters/chat';
 import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref, needsPostLoginBotRedirect } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
-import { Colors } from '@/constants/Colors';
 import { AppProviders, useAuthState, useServices } from '@/features/chat/AppProviders';
 import { AuthGate } from '@/features/chat/AuthGate';
 import { NotificationsProvider } from '@/features/notifications/NotificationProvider';
 import { AppShell } from '@/features/shell/AppShell';
+import { useAppearance } from '@/features/shell/AppearanceProvider';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -54,7 +54,8 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
-  const palette = colorScheme === 'dark' ? Colors.dark : Colors.light;
+  const { pack } = useAppearance();
+  const palette = colorScheme === 'dark' ? pack.dark : pack.light;
   const { chat } = useServices();
   const { user, justSignedIn, clearJustSignedIn } = useAuthState();
   const pathname = usePathname();
@@ -86,6 +87,7 @@ function RootLayoutNav() {
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="u/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
     </Stack>
   );

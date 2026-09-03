@@ -2,8 +2,8 @@
  * Inbox + thread screens — Gigolingo gradient shell + fourSome ember UI.
  */
 
-import { router, useLocalSearchParams, useRouter } from 'expo-router';
-import { learningBotHref, routeParam } from '@/adapters/postLogin';
+import { router, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { learningBotHref, profileHref, routeParam } from '@/adapters/postLogin';
 import { chatActorIds, chatPersistenceUserId, isChatSelf } from '@/adapters/identity';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -21,13 +21,17 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import {
+  canDeleteForEveryone,
   createLearnerViewpoint,
   imageUrlsOf,
+  isDeletedForEveryone,
   isLearningBotConversation,
   isMediaMessage,
   LEARNING_BOT_DISPLAY_NAME,
   LEARNING_BOT_USER_ID,
   mediaKindOf,
+  mergeMessageTimelines,
+  messagesVisibleToViewer,
   otherParticipantId,
   renderViewpoint,
   shouldTranslateMessage,
@@ -36,6 +40,7 @@ import {
   mergeLineTranslations,
   mergeTranslationMaps,
   toTranslationMode,
+  tombstoneMessage,
   translationMismatch,
   type AsymmetricLanguageContext,
   type Conversation,
@@ -47,11 +52,12 @@ import {
 import { shouldAutoReplyFromSendInput } from '@/domain/chatAutoReply';
 import {
   ensureLearningBotChat,
+  ensureHumanDmCloudSaved,
   labelForAiBackend,
   listInboxConversations,
   ResilientChatCompletionAdapter,
 } from '@/adapters/chat';
-import { usernameFromUser } from '@/adapters/friends';
+import { conversationTitleFor, currentFriendShareUrl, publicHandleCopyValue, publicHandleForUser } from '@/adapters/friends';
 import { processOutgoingTranslation, completeBilingualBotReply, persistCompletedHistory, recalculateBirkenbihlForThread, retryBubbleTranslations } from '@/adapters/translation';
 import { loadConversationThread } from '@/adapters/chatPersistence';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -61,6 +67,8 @@ import { useAppShell, useWideChatChrome } from '@/features/shell/AppShell';
 import { useVocabCardFromTap } from '@/features/vocabulary/CreateVocabCardModal';
 import { TippedVocabHome } from '@/features/vocabulary/vocabularyUi';
 import { AlphaNotice } from '@/features/alpha';
+import { WhatsAppImportControl } from '@/features/chat/WhatsAppImportModal';
+import { MessageDeleteSheet } from '@/features/chat/MessageDeleteSheet';
 import {
   ChatSettingsSheet,
   ChatsEmptyHome,
@@ -96,18 +104,14 @@ function newMessageId(): string {
 
 /** Keep FlatList keys unique when merging optimistic + subscribed repo snapshots. */
 function upsertMessages(prev: SourceMessage[], ...incoming: SourceMessage[]): SourceMessage[] {
-  const byId = new Map(prev.map((m) => [m.id, m]));
-  for (const message of incoming) {
-    byId.set(message.id, message);
-  }
-  return [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return mergeMessageTimelines(prev, incoming);
 }
 
 export function InboxScreen() {
   const scheme = useColorScheme();
   const colors = useThemeColors(scheme);
-  const { desktop } = useAppShell();
-  const { chat, auth } = useServices();
+  const { desktop, expandSidebar } = useAppShell();
+  const { chat, auth, friendsTick } = useServices();
   const { user, ready } = useAuthState();
   const nav = useRouter();
   const [items, setItems] = useState<Conversation[]>([]);
@@ -132,10 +136,12 @@ export function InboxScreen() {
     }
   }, [chat, user]);
 
-  useEffect(() => {
-    if (!ready || !user) return;
-    void refresh();
-  }, [ready, user, refresh]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!ready || !user) return;
+      void refresh();
+    }, [ready, user, refresh, friendsTick])
+  );
 
   const filtered = useMemo(() => {
     if (!debounced) return items;
@@ -146,8 +152,12 @@ export function InboxScreen() {
     );
   }, [debounced, items]);
 
-  const username = user ? usernameFromUser(user) : 'SavignaLearner';
-  const inviteUrl = `https://savignalearn.app/u/${encodeURIComponent(username)}`;
+  const username = user ? publicHandleCopyValue(user) : 'SavignaLearner';
+  const identityLabel = user ? publicHandleForUser(user) : username;
+  const identityIsEmail = username.includes('@');
+  const inviteUrl = user && identityIsEmail
+    ? currentFriendShareUrl(user.id)
+    : `https://savignalearn.app/u/${encodeURIComponent(username)}`;
 
   const copyUsername = async () => {
     await Clipboard.setStringAsync(username);
@@ -187,7 +197,8 @@ export function InboxScreen() {
         <AlphaNotice colors={colors} />
         <ChatsEmptyHome
           colors={colors}
-          username={username}
+          username={identityLabel}
+          identityKind={identityIsEmail ? 'email' : 'username'}
           copied={copied}
           onCopyUsername={() => void copyUsername()}
           onShareInvite={() => void shareInvite()}
@@ -216,8 +227,19 @@ export function InboxScreen() {
             Pick a chat
           </Text>
           <Text style={{ color: colors.textMuted, marginTop: 8, textAlign: 'center', maxWidth: 360 }}>
-            Conversations stay in the sidebar — chat and friends only, no meetups.
+            Use the menu (top left) to open chats and friends — no meetups.
           </Text>
+          <Pressable
+            onPress={expandSidebar}
+            accessibilityRole="button"
+            accessibilityLabel="Open sidebar"
+            style={{ marginTop: 16, paddingHorizontal: 16, paddingVertical: 10 }}
+          >
+            <Text style={{ color: colors.accent, fontWeight: '800' }}>Open sidebar</Text>
+          </Pressable>
+          <View style={{ marginTop: 16 }}>
+            <WhatsAppImportControl colors={colors} />
+          </View>
           <View style={{ alignSelf: 'stretch', width: '100%', maxWidth: 560, marginTop: 28 }}>
             <TippedVocabHome colors={colors} />
           </View>
@@ -265,13 +287,19 @@ export function InboxScreen() {
         ]}
         accessibilityLabel="Search conversations"
       />
+      <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
+        <WhatsAppImportControl colors={colors} />
+      </View>
+      <View style={{ paddingHorizontal: 16, marginBottom: 10 }}>
+        <TippedVocabHome colors={colors} />
+      </View>
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ paddingBottom: 16 }}
         renderItem={({ item }) => (
           <InboxRow
-            title={item.title ?? 'Chat'}
+            title={conversationTitleFor(item, user ? chatActorIds(user) : [], 'Chat')}
             preview={item.lastMessagePreview}
             time={relativeTime(item.updatedAt)}
             unread={item.unreadCount}
@@ -305,6 +333,7 @@ export function ThreadScreen() {
     refreshHealth,
     vocabularyCards,
     learningItems,
+    bumpFriends,
   } = useServices();
   const { user } = useAuthState();
   const chatUserId = user ? chatPersistenceUserId(user) : undefined;
@@ -315,6 +344,7 @@ export function ThreadScreen() {
   const router = useRouter();
   const { showNotification } = useNotifications();
   const wideChrome = useWideChatChrome();
+  const { desktop, expandSidebar, sidebarExpanded } = useAppShell();
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<SourceMessage[]>([]);
@@ -330,6 +360,12 @@ export function ThreadScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [birkenBusy, setBirkenBusy] = useState(false);
   const [translationRetryIds, setTranslationRetryIds] = useState<string[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+  const [deleteTarget, setDeleteTarget] = useState<SourceMessage | null>(null);
+  const visibleMessages = useMemo(
+    () => messagesVisibleToViewer(messages, hiddenIds),
+    [messages, hiddenIds]
+  );
   const listRef = useRef<FlatList<SourceMessage>>(null);
   const inFlight = useRef(new Set<string>());
   const translationsRef = useRef(translations);
@@ -362,7 +398,7 @@ export function ThreadScreen() {
   }, [completion, aiBackend, messages, streamingId]);
 
   const { wordTap, modal: vocabModal } = useVocabCardFromTap({
-    userId: user?.id,
+    userId: chatUserId,
     cards: vocabularyCards,
     items: learningItems,
     colors,
@@ -449,9 +485,16 @@ export function ThreadScreen() {
         if (msg.sourceText !== sourceSnapshot) {
           msg.sourceText = sourceSnapshot;
         }
-        const merged = mergeLineTranslations(existing, next);
+        if (messageForRetry.sourceLang !== msg.sourceLang) {
+          const retagged = { ...msg, sourceLang: messageForRetry.sourceLang };
+          await chat.appendMessage(retagged).catch(() => undefined);
+          setMessages((prev) =>
+            prev.map((item) => (item.id === msg.id ? { ...item, sourceLang: retagged.sourceLang } : item))
+          );
+        }
+        const merged = next;
         await chat.saveTranslations(msg.id, merged);
-        setTranslations((prev) => ({ ...prev, [msg.id]: mergeLineTranslations(prev[msg.id] ?? [], merged) }));
+        setTranslations((prev) => ({ ...prev, [msg.id]: merged }));
       } catch {
         // Keep source visible; Retry stays if the pair is still empty/mismatched.
       } finally {
@@ -629,8 +672,19 @@ export function ThreadScreen() {
       conv = await chat.getConversation(botId);
       activeId = botId;
     }
-    setConversation(conv);
+    setConversation(conv ? { ...conv, unreadCount: 0 } : conv);
+    if (chatUserId) {
+      await chat.markConversationRead(activeId, selfIds.length > 0 ? selfIds : [chatUserId]);
+      if (conv && conv.unreadCount > 0) bumpFriends();
+    }
     setBotReplies(conv?.aiEnabled !== false);
+    if (conv && !isLearningBotConversation(conv)) {
+      const cloudId = await ensureHumanDmCloudSaved(chat, conv.id);
+      if (cloudId && cloudId !== activeId) {
+        router.replace(learningBotHref(cloudId));
+        return;
+      }
+    }
     const participant = conv?.participants.find((p) => (user ? isChatSelf(user, p.userId) : false));
     const receiverId = conv && user ? otherParticipantId(conv, selfIds) : undefined;
     const receiver = conv?.participants.find((p) => p.userId === receiverId);
@@ -645,6 +699,10 @@ export function ThreadScreen() {
       conversationId: activeId,
       userId: chatUserId ?? user?.id,
     });
+    if (chatUserId) {
+      const hides = await chat.listHiddenMessageIds(chatUserId).catch(() => []);
+      setHiddenIds(new Set(hides));
+    }
     setMessages((prev) => {
       const pending = prev.filter(
         (item) =>
@@ -653,7 +711,7 @@ export function ThreadScreen() {
       return upsertMessages(thread.messages, ...pending);
     });
     setTranslations((prev) => mergeTranslationMaps(prev, thread.translations));
-  }, [chat, historyStore, conversationId, user?.id, chatUserId, selfIds, router]);
+  }, [chat, historyStore, conversationId, user?.id, chatUserId, selfIds, router, bumpFriends]);
 
   useEffect(() => {
     void load();
@@ -665,6 +723,10 @@ export function ThreadScreen() {
         return upsertMessages(next, ...pending);
       });
       void (async () => {
+        if (chatUserId) {
+          await chat.markConversationRead(conversationId, selfIds.length > 0 ? selfIds : [chatUserId]);
+          bumpFriends();
+        }
         const extras: Record<string, LineTranslation[]> = {};
         for (const msg of next) {
           const listed = await chat.listTranslations(msg.id);
@@ -682,9 +744,9 @@ export function ThreadScreen() {
   }, [chat, conversationId, load]);
 
   useEffect(() => {
-    if (messages.length === 0) return;
+    if (visibleMessages.length === 0) return;
     requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
-  }, [messages]);
+  }, [visibleMessages]);
 
   const send = async (
     input:
@@ -950,6 +1012,51 @@ export function ThreadScreen() {
     });
   };
 
+  const removeMessage = async (scope: 'me' | 'everyone') => {
+    const target = deleteTarget;
+    if (!target || !chatUserId) return;
+    setDeleteTarget(null);
+    try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      // web / missing haptics
+    }
+    if (scope === 'me') {
+      setHiddenIds((prev) => new Set(prev).add(target.id));
+    } else {
+      setMessages((prev) =>
+        prev.map((item) => (item.id === target.id ? tombstoneMessage(item) : item))
+      );
+    }
+    try {
+      const result = await chat.deleteMessage({
+        messageId: target.id,
+        conversationId,
+        actorId: chatUserId,
+        scope,
+        viewerIds: selfIds,
+      });
+      if (scope === 'everyone' && result) {
+        setMessages((prev) => prev.map((item) => (item.id === result.id ? result : item)));
+        const record = await historyStore.get(target.id);
+        if (record) {
+          await historyStore.save({ ...record, message: result });
+        }
+      }
+    } catch (caught) {
+      if (scope === 'me') {
+        setHiddenIds((prev) => {
+          const next = new Set(prev);
+          next.delete(target.id);
+          return next;
+        });
+      } else {
+        setMessages((prev) => prev.map((item) => (item.id === target.id ? target : item)));
+      }
+      setSendError(caught instanceof Error ? caught.message : 'Could not delete message');
+    }
+  };
+
   const chatSettings = {
     colors,
     mode,
@@ -963,6 +1070,7 @@ export function ThreadScreen() {
     onLearningLangChange: persistLearning,
     onPartnerLearningLangChange: persistPartner,
     isBotChat,
+    storedInCloud: !isBotChat,
     aiBackend,
     onAiBackendChange: setAiBackend,
     health,
@@ -973,19 +1081,32 @@ export function ThreadScreen() {
   return (
     <GradientScreen scheme={scheme} edges={['top', 'left', 'right', 'bottom']}>
       <ThreadChromeHeader
-        title={conversation?.title ?? LEARNING_BOT_DISPLAY_NAME}
+        title={conversationTitleFor(conversation, selfIds, LEARNING_BOT_DISPLAY_NAME)}
         subtitle={
           wideChrome
             ? undefined
             : `${nativeLang.toUpperCase()} → ${learningLang.toUpperCase()} · they read ${partnerLearningLang.toUpperCase()}`
         }
         pipelineLabel={wideChrome ? undefined : pipelineLabel}
-        onBack={() => router.back()}
+        onBack={
+          desktop
+            ? () => (sidebarExpanded ? router.back() : expandSidebar())
+            : () => router.back()
+        }
+        leadingIcon={desktop && !sidebarExpanded ? 'menu' : 'chevron-back'}
+        leadingLabel={desktop && !sidebarExpanded ? 'Open sidebar' : 'Back'}
         onOpenSettings={wideChrome ? undefined : () => setSettingsOpen(true)}
         inlineSettings={wideChrome ? <ThreadInlineChatSettings {...chatSettings} /> : undefined}
         colors={colors}
         scheme={scheme}
         isBot={isBotChat}
+        onOpenProfile={() => {
+          const other =
+            (conversation && otherParticipantId(conversation, selfIds)) ||
+            (isBotChat ? LEARNING_BOT_USER_ID : undefined);
+          if (!other) return;
+          router.push(profileHref(other, conversationId));
+        }}
       />
       <KeyboardAvoidingView
         style={styles.flex}
@@ -994,11 +1115,11 @@ export function ThreadScreen() {
       >
         <FlatList
           ref={listRef}
-          data={messages}
-          extraData={{ messages, translations, mode, birkenBusy, translationRetryIds }}
+          data={visibleMessages}
+          extraData={{ messages: visibleMessages, translations, mode, birkenBusy, translationRetryIds, hiddenIds }}
           keyExtractor={(item) => item.id}
           style={styles.flex}
-          initialNumToRender={Math.max(messages.length, 32)}
+          initialNumToRender={Math.max(visibleMessages.length, 32)}
           windowSize={21}
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
@@ -1020,6 +1141,7 @@ export function ThreadScreen() {
               viewpoint,
             });
             const canRetryTranslation =
+              !isDeletedForEveryone(item) &&
               mismatch &&
               item.receipt !== 'failed' &&
               shouldTranslateMessage(item) &&
@@ -1028,7 +1150,7 @@ export function ThreadScreen() {
               <MessageBubble
                 mine={mine}
                 kind={kind}
-                lines={lines}
+                lines={isDeletedForEveryone(item) ? [] : lines}
                 mode={mode}
                 language={itemForView.sourceLang}
                 tokenizer={tokenizer}
@@ -1041,8 +1163,10 @@ export function ThreadScreen() {
                 streaming={streamingId === item.id}
                 nativeLang={nativeLang}
                 learningLang={learningLang}
-                imageUrls={imageUrlsOf(item)}
-                mediaKind={mediaKindOf(item)}
+                imageUrls={isDeletedForEveryone(item) ? [] : imageUrlsOf(item)}
+                mediaKind={isDeletedForEveryone(item) ? undefined : mediaKindOf(item)}
+                deleted={isDeletedForEveryone(item)}
+                onRequestDelete={() => setDeleteTarget(item)}
                 onRetry={() => void send({ type: 'retry', message: item })}
                 onRetryTranslation={
                   canRetryTranslation ? () => void retryTranslation(item, mismatch) : undefined
@@ -1085,6 +1209,16 @@ export function ThreadScreen() {
         pipelineLabel={pipelineLabel}
         healthChecking={healthChecking}
         onRetryHealth={refreshHealth}
+      />
+      <MessageDeleteSheet
+        visible={Boolean(deleteTarget)}
+        colors={colors}
+        canDeleteForEveryone={Boolean(
+          deleteTarget && canDeleteForEveryone(deleteTarget, selfIds)
+        )}
+        onDeleteForMe={() => void removeMessage('me')}
+        onDeleteForEveryone={() => void removeMessage('everyone')}
+        onClose={() => setDeleteTarget(null)}
       />
     </GradientScreen>
   );

@@ -1,4 +1,5 @@
 import type { AuthUser } from '@/ports/ports';
+import { ICESTORM_IDO_USER_ID, ICESTORM_PROFILE_ID, canonicalChatActorId, isIcestormIdentity } from '@/domain/friends';
 
 export type IdentityUser = {
   id: string;
@@ -32,12 +33,31 @@ export function chatActorIds(user: Pick<AuthUser, 'id' | 'idoUserId'>): string[]
   return [...new Set([chatPersistenceUserId(user), user.id].filter(Boolean))];
 }
 
+/** Extra local KV keys to load so stub friend ids still find DMs after a real login. */
+export function chatHydrateAliasIds(
+  user: Pick<AuthUser, 'id' | 'idoUserId' | 'email' | 'displayName'>
+): string[] {
+  const ids = new Set(chatActorIds(user));
+  const hints = [
+    { id: user.id, email: user.email, username: user.displayName },
+    { id: user.idoUserId, email: user.email, username: user.displayName },
+  ];
+  if (hints.some((hint) => isIcestormIdentity(hint))) {
+    ids.add(ICESTORM_PROFILE_ID);
+    ids.add(ICESTORM_IDO_USER_ID);
+  }
+  return [...ids].filter(Boolean);
+}
+
 export function isChatSelf(
-  user: Pick<AuthUser, 'id' | 'idoUserId'> | null | undefined,
+  user: Pick<AuthUser, 'id' | 'idoUserId' | 'email'> | null | undefined,
   actorId: string
 ): boolean {
   if (!user) return false;
-  return chatActorIds(user).includes(actorId);
+  if (chatActorIds(user).includes(actorId)) return true;
+  const mine = new Set(chatActorIds(user).map(canonicalChatActorId));
+  if (isIcestormIdentity(user)) mine.add(ICESTORM_IDO_USER_ID);
+  return mine.has(canonicalChatActorId(actorId));
 }
 
 export function identityFromSupabaseUser(user: {

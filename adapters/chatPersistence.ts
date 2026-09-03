@@ -5,10 +5,12 @@
 
 import {
   LEARNING_BOT_USER_ID,
+  mergeMessageTimelines,
   type Conversation,
   type LineTranslation,
   type SourceMessage,
 } from '@/domain/chat';
+import { messagesVisibleToViewer } from '@/domain/messageDelete';
 import {
   mergeLineTranslations,
   type ChatHistoryRecord,
@@ -37,6 +39,8 @@ export type ChatSnapshot = {
   conversations: Conversation[];
   messages: Record<string, SourceMessage[]>;
   translations: Record<string, LineTranslation[]>;
+  hiddenMessageIds?: string[];
+  unreadCounts?: Record<string, number>;
 };
 
 export class MemoryChatKv implements ChatKv {
@@ -55,7 +59,9 @@ export function snapshotForUser(
   conversations: Conversation[],
   messages: Map<string, SourceMessage[]>,
   translations: Map<string, LineTranslation[]>,
-  userId: string
+  userId: string,
+  hiddenMessageIds: string[] = [],
+  unreadCounts: Record<string, number> = {}
 ): ChatSnapshot {
   const mine = conversations.filter((item) => item.participantIds.includes(userId));
   const messageRecord: Record<string, SourceMessage[]> = {};
@@ -68,7 +74,17 @@ export function snapshotForUser(
       if (lines && lines.length > 0) translationRecord[message.id] = lines;
     }
   }
-  return { version: 1, conversations: mine, messages: messageRecord, translations: translationRecord };
+  return {
+    version: 1,
+    conversations: mine.map((item) => ({
+      ...item,
+      unreadCount: unreadCounts[item.id] ?? 0,
+    })),
+    messages: messageRecord,
+    translations: translationRecord,
+    hiddenMessageIds,
+    unreadCounts,
+  };
 }
 
 export function parseChatSnapshot(raw: string | null): ChatSnapshot | null {
@@ -106,6 +122,29 @@ export function applySnapshot(
 export function humanParticipantIds(conversation: Conversation | undefined): string[] {
   if (!conversation) return [];
   return conversation.participantIds.filter((id) => id !== LEARNING_BOT_USER_ID);
+}
+
+/** Rewrite stub ids (e.g. friend-icestormfroste) onto the live signed-in id. */
+export function remapChatActorId(input: {
+  conversations: Conversation[];
+  messages: Map<string, SourceMessage[]>;
+  fromId: string;
+  toId: string;
+}): void {
+  if (!input.fromId || !input.toId || input.fromId === input.toId) return;
+  for (const conversation of input.conversations) {
+    conversation.participantIds = conversation.participantIds.map((id) =>
+      id === input.fromId ? input.toId : id
+    );
+    conversation.participants = conversation.participants.map((participant) =>
+      participant.userId === input.fromId ? { ...participant, userId: input.toId } : participant
+    );
+  }
+  for (const list of input.messages.values()) {
+    for (const message of list) {
+      if (message.authorId === input.fromId) message.authorId = input.toId;
+    }
+  }
 }
 
 export function parseHistorySnapshot(raw: string | null): ChatHistoryRecord[] | null {
@@ -149,12 +188,14 @@ export async function loadConversationThread(input: {
 
   const fromRepo = await input.chat.listMessages(input.conversationId);
   const fromHistory = await input.historyStore.listByConversation(input.conversationId);
-  const byId = new Map<string, SourceMessage>();
-  for (const message of fromRepo) byId.set(message.id, message);
-  for (const record of fromHistory) {
-    if (!byId.has(record.message.id)) byId.set(record.message.id, record.message);
-  }
-  const messages = [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const merged = mergeMessageTimelines(
+    fromRepo,
+    fromHistory.map((record) => record.message)
+  );
+  const hiddenIds = input.userId
+    ? await input.chat.listHiddenMessageIds(input.userId).catch(() => [])
+    : [];
+  const messages = messagesVisibleToViewer(merged, new Set(hiddenIds));
 
   const translations: Record<string, LineTranslation[]> = {};
   for (const message of messages) {

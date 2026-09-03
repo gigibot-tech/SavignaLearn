@@ -5,8 +5,13 @@ import {
   DEMO_LEARNER_ID,
   FriendRequestFailed,
   ICESTORM_EMAIL,
+  ICESTORM_IDO_USER_ID,
   ICESTORM_PROFILE_ID,
   ICESTORM_USERNAME,
+  IDO_LEARN_EMAIL,
+  IDO_LEARN_USER_ID,
+  IDO_SAVINA_EMAIL,
+  IDO_SAVINA_USER_ID,
 } from '@/domain/friends';
 import type { ChatRepository } from '@/ports/ports';
 import {
@@ -27,7 +32,7 @@ function fakeChat(seed: Conversation[] = []): ChatRepository {
     },
     async createConversation(input) {
       const conversation: Conversation = {
-        id: `c-${conversations.length}`,
+        id: input.id ?? `c-${conversations.length}`,
         participantIds: input.participantIds,
         participants: input.participants,
         aiEnabled: input.aiEnabled,
@@ -44,6 +49,13 @@ function fakeChat(seed: Conversation[] = []): ChatRepository {
     async appendMessage(message) {
       return message;
     },
+    async deleteMessage() {
+      return null;
+    },
+    async listHiddenMessageIds() {
+      return [];
+    },
+    async markConversationRead() {},
     async updateReceipt() {},
     async saveTranslations() {},
     async listTranslations() {
@@ -198,6 +210,14 @@ describe('InMemoryFriendsRepository', () => {
         (row) => row.status === 'accepted' && [row.requesterId, row.addresseeId].includes(liveId)
       )
     ).toBe(true);
+    const asIceSavina = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
+    asIceSavina.seedForViewer(liveId, { id: liveId, email: ICESTORM_EMAIL });
+    expect(
+      (await asIceSavina.listFor(liveId)).some(
+        (row) =>
+          row.status === 'accepted' && [row.requesterId, row.addresseeId].includes(IDO_SAVINA_USER_ID)
+      )
+    ).toBe(true);
   });
 
   it('does not insert a ghost when the email is unknown', async () => {
@@ -299,6 +319,37 @@ describe('usernameFromUser', () => {
     expect(usernameFromUser({ id: 'x', email: 'learner@savigna.local' })).toBe('learner');
     expect(usernameFromUser({ id: 'y', email: ICESTORM_EMAIL })).toBe('icestormfroste');
   });
+
+  it('does not let a shared display name overwrite a known email handle', () => {
+    expect(usernameFromUser({ id: IDO_SAVINA_USER_ID, email: IDO_SAVINA_EMAIL, displayName: 'Learn' })).toBe(
+      'savina'
+    );
+    expect(usernameFromUser({ id: IDO_LEARN_USER_ID, email: IDO_LEARN_EMAIL, displayName: 'Learn' })).toBe(
+      'learn'
+    );
+  });
+});
+
+describe('ambiguous usernames', () => {
+  it('refuses @learn when two emails share it and accepts the email instead', async () => {
+    const friends = new InMemoryFriendsRepository({ seed: true, idoConfigured: false });
+    await friends.registerProfile({
+      id: IDO_LEARN_USER_ID,
+      username: 'learn',
+      displayName: 'Learn',
+      email: IDO_LEARN_EMAIL,
+    });
+    await friends.registerProfile({
+      id: IDO_SAVINA_USER_ID,
+      username: 'learn',
+      displayName: 'Learn',
+      email: IDO_SAVINA_EMAIL,
+    });
+    await friends.registerProfile({ id: 'me', username: 'me', displayName: 'Me', email: 'me@example.com' });
+    await expect(friends.request('me', 'learn')).rejects.toMatchObject({ error: 'username_ambiguous' });
+    const sent = await friends.request('me', IDO_SAVINA_EMAIL);
+    expect(sent.addresseeId).toBe(IDO_SAVINA_USER_ID);
+  });
 });
 
 describe('findOrCreateDirectChat', () => {
@@ -323,7 +374,31 @@ describe('findOrCreateDirectChat', () => {
     const first = await findOrCreateDirectChat(chat, { id: 'me' }, mira);
     const second = await findOrCreateDirectChat(chat, { id: 'me' }, mira);
     expect(first.id).toBe(second.id);
+    expect(first.id).toBe('dm:friend-mira:me');
     expect(first.title).toBe('Mira');
     expect(first.participantIds.includes(LEARNING_BOT_USER_ID)).toBe(false);
+  });
+
+  it('uses the same dm: id for the ice stub and live iDO user', async () => {
+    const chat = fakeChat();
+    const iceStub = {
+      id: ICESTORM_PROFILE_ID,
+      username: ICESTORM_USERNAME,
+      displayName: ICESTORM_USERNAME,
+      email: ICESTORM_EMAIL,
+    };
+    const fromLearn = await findOrCreateDirectChat(chat, { id: IDO_LEARN_USER_ID }, iceStub);
+    const fromIce = await findOrCreateDirectChat(
+      chat,
+      { id: ICESTORM_IDO_USER_ID },
+      {
+        id: IDO_LEARN_USER_ID,
+        username: 'learn',
+        displayName: 'Learn',
+        email: IDO_LEARN_EMAIL,
+      }
+    );
+    expect(fromLearn.id).toBe(fromIce.id);
+    expect(fromLearn.id.startsWith('dm:')).toBe(true);
   });
 });

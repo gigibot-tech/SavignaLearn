@@ -1,5 +1,7 @@
 import { tokenizeText } from '@/domain/text';
+import { toGigolingoLangKey } from '@/domain';
 import { getVocabularyCardPrompt } from '@/gigolingo-shared/vocabularyPrompts';
+import { inferVocabLanguageFromWord } from '@/gigolingo-shared/languages';
 import { InMemoryChatRepository } from '@/adapters/memoryChat';
 import { authStorage } from '@/adapters/authStorage';
 import {
@@ -8,6 +10,7 @@ import {
   PolicyChatRepository,
   type ChatStorageBackendId,
 } from '@/adapters/chatCloud';
+export { ensureHumanDmCloudSaved } from '@/adapters/chatCloud';
 import { createChatContentCipher } from '@/adapters/chatCipher';
 import {
   completeFourSomeWebSocket,
@@ -52,14 +55,18 @@ export {
 /**
  * Chat repository + completion + learning stubs.
  * Inbox/thread default is local KV (`savigna.chat.v1.<userId>`).
- * Cloud savigna_* is opt-in per chat, not used because an iDO JWT exists.
+ * Human DMs also sync to savigna_* when iDO Auth is configured so both people
+ * share one conversation id. Bot stays local.
  */
 
 export { InMemoryChatRepository } from '@/adapters/memoryChat';
 
 export const memoryChat = new InMemoryChatRepository(authStorage);
 const chatRouteBook = new InMemoryChatRouteBook();
-const chatStoragePolicy = new LocalFirstChatPolicy(chatRouteBook);
+const chatStoragePolicy = new LocalFirstChatPolicy(chatRouteBook, {
+  inboxBackends: isIdoAiConfigured() ? ['local', 'cloud'] : ['local'],
+  shareHumanDms: isIdoAiConfigured(),
+});
 
 class UnavailableChatRepository implements ChatRepository {
   constructor(private readonly backendId: ChatStorageBackendId) {}
@@ -85,6 +92,18 @@ class UnavailableChatRepository implements ChatRepository {
   }
 
   async appendMessage(): Promise<never> {
+    this.fail();
+  }
+
+  async deleteMessage(): Promise<never> {
+    this.fail();
+  }
+
+  async listHiddenMessageIds(): Promise<never> {
+    this.fail();
+  }
+
+  async markConversationRead(): Promise<never> {
     this.fail();
   }
 
@@ -488,7 +507,8 @@ export class OnPremChatCompletionAdapter implements ChatCompletionPort {
 
 /** Vocabulary card prompts — Gigolingo `getVocabularyCardPrompt` (copied into gigolingo-shared). */
 export function vocabularyCardPrompt(word: string, sentence: string, language = 'de') {
-  return getVocabularyCardPrompt(word, sentence, language.toUpperCase(), 'EN');
+  const resolved = inferVocabLanguageFromWord(word, language);
+  return getVocabularyCardPrompt(word, sentence, toGigolingoLangKey(resolved), 'EN');
 }
 
 const AI_BACKEND_STORAGE_KEY = 'savigna.aiBackend.v2';

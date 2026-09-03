@@ -1,5 +1,5 @@
 /**
- * Friends: add by email, user id, or /friends?add= link; accept/decline; open a DM.
+ * Friends: add by email, user id, or /friends?add= link; accept/decline; open a profile.
  * No meetups — same scope as the fourSome web sidebar minus events.
  */
 
@@ -14,12 +14,13 @@ import {
   type FriendRequestError,
   type FriendRow,
 } from '@/domain/friends';
-import { currentFriendShareUrl, findOrCreateDirectChat, usernameFromUser } from '@/adapters/friends';
+import { currentFriendShareUrl, findOrCreateDirectChat, publicHandleForUser } from '@/adapters/friends';
 import { chatPersistenceUserId } from '@/adapters/identity';
-import { learningBotHref } from '@/adapters/postLogin';
+import { learningBotHref, profileHref } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { GlassPanel, GradientCta, GradientScreen, useThemeColors } from '@/features/chat/chatUi';
+import { WhatsAppImportControl } from '@/features/chat/WhatsAppImportModal';
 import { useAppShell } from '@/features/shell/AppShell';
 
 const ERROR_CODES: FriendRequestError[] = [
@@ -32,6 +33,7 @@ const ERROR_CODES: FriendRequestError[] = [
   'missing_email',
   'already_friends',
   'already_requested',
+  'username_ambiguous',
 ];
 
 function errorFromCaught(caught: unknown): FriendRequestError {
@@ -95,6 +97,10 @@ export function FriendsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addParam, user]);
 
+  const openProfile = (row: FriendRow) => {
+    router.push(profileHref(row.userId));
+  };
+
   const openChat = async (row: FriendRow) => {
     if (!user || row.inconsistent) return;
     const conv = await findOrCreateDirectChat(chat, { id: chatPersistenceUserId(user) }, {
@@ -124,7 +130,7 @@ export function FriendsScreen() {
   const incoming = rows.filter((row) => row.kind === 'incoming');
   const outgoing = rows.filter((row) => row.kind === 'outgoing');
   const accepted = rows.filter((row) => row.kind === 'accepted');
-  const username = user ? usernameFromUser(user) : '';
+  const username = user ? publicHandleForUser(user) : '';
 
   return (
     <GradientScreen scheme={scheme}>
@@ -133,8 +139,9 @@ export function FriendsScreen() {
           Friends
         </Text>
         <Text style={{ color: colors.textMuted, paddingHorizontal: 16, marginBottom: 16 }}>
-          Your username is @{username}. Add people by email, user id, or friend link — then chat. No
-          meetups.
+          {username.includes('@') && !username.startsWith('@')
+            ? `Several people share that username — you’re ${username}. Add people by email, user id, or friend link.`
+            : `Your username is ${username}. Add people by email, user id, or friend link — then chat. No meetups.`}
         </Text>
 
         <GlassPanel colors={colors} style={styles.card}>
@@ -153,6 +160,9 @@ export function FriendsScreen() {
           />
           <View style={{ marginTop: 12 }}>
             <GradientCta label={busy ? 'Adding…' : 'Add'} onPress={() => void add()} />
+          </View>
+          <View style={{ marginTop: 10 }}>
+            <WhatsAppImportControl colors={colors} />
           </View>
           <View style={styles.copyRow}>
             <Pressable
@@ -183,18 +193,22 @@ export function FriendsScreen() {
             <Text style={[styles.section, { color: colors.textMuted }]}>Requests</Text>
             {incoming.map((row) => (
               <View key={row.friendshipId} style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-                <View style={{ flex: 1 }}>
+                <Pressable
+                  onPress={() => openProfile(row)}
+                  style={{ flex: 1 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${row.displayName} profile`}
+                >
                   <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
                   <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                    @{row.username}
-                    {row.email ? ` · ${row.email}` : ''}
+                    {row.handleLabel}
                   </Text>
                   {row.inconsistent ? (
                     <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
                       Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
                     </Text>
                   ) : null}
-                </View>
+                </Pressable>
                 {row.inconsistent ? (
                   <Pressable
                     onPress={() => void removeRow(row)}
@@ -242,18 +256,22 @@ export function FriendsScreen() {
             <Text style={[styles.section, { color: colors.textMuted }]}>Sent</Text>
             {outgoing.map((row) => (
               <View key={row.friendshipId} style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-                <View style={{ flex: 1 }}>
+                <Pressable
+                  onPress={() => openProfile(row)}
+                  style={{ flex: 1 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${row.displayName} profile`}
+                >
                   <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
                   <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                    Waiting · @{row.username}
-                    {row.email ? ` · ${row.email}` : ''}
+                    Waiting · {row.handleLabel}
                   </Text>
                   {row.inconsistent ? (
                     <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
                       Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
                     </Text>
                   ) : null}
-                </View>
+                </Pressable>
                 <Pressable
                   onPress={() => void removeRow(row)}
                   accessibilityRole="button"
@@ -280,16 +298,15 @@ export function FriendsScreen() {
                   style={[styles.rowCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
                 >
                   <Pressable
-                    onPress={() => void openChat(row)}
+                    onPress={() => openProfile(row)}
                     disabled={row.inconsistent}
                     style={{ flex: 1 }}
                     accessibilityRole="button"
-                    accessibilityLabel={row.inconsistent ? `${row.displayName} inconsistent` : `Chat with ${row.displayName}`}
+                    accessibilityLabel={row.inconsistent ? `${row.displayName} inconsistent` : `Open ${row.displayName} profile`}
                   >
                     <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
                     <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                      @{row.username}
-                      {row.email ? ` · ${row.email}` : ''}
+                      {row.handleLabel}
                     </Text>
                     {row.inconsistent ? (
                       <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
@@ -307,7 +324,13 @@ export function FriendsScreen() {
                     </Pressable>
                   ) : (
                     <>
-                      <Text style={{ color: colors.accent, fontWeight: '700' }}>Chat</Text>
+                      <Pressable
+                        onPress={() => void openChat(row)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Chat with ${row.displayName}`}
+                      >
+                        <Text style={{ color: colors.accent, fontWeight: '700' }}>Chat</Text>
+                      </Pressable>
                       <Pressable
                         onPress={() => void removeRow(row)}
                         accessibilityRole="button"
@@ -336,8 +359,7 @@ export function FriendsScreen() {
                       <View style={{ flex: 1 }}>
                         <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
                         <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                          @{row.username}
-                          {row.email ? ` · ${row.email}` : ''}
+                          {row.handleLabel}
                         </Text>
                         <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
                           Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
@@ -355,7 +377,7 @@ export function FriendsScreen() {
               </>
             ) : (
               <Text style={{ color: colors.textMuted }}>
-                Your friends stay in the sidebar. Tap one to open a chat.
+                Use the menu (top left) for your friend list. Tap a name to open their profile.
               </Text>
             )}
           </View>

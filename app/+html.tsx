@@ -11,7 +11,7 @@ export default function Root({ children }: { children: ReactNode }) {
           name="viewport"
           content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
         />
-        <meta name="theme-color" content="#E85D4C" />
+        <meta name="theme-color" content="#C43B6F" />
         <meta name="application-name" content="SavignaLearn" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -34,11 +34,11 @@ export default function Root({ children }: { children: ReactNode }) {
 
 const responsiveBackground = `
 body {
-  background-color: #FFF6F0;
+  background-color: #FFF5F8;
 }
 @media (prefers-color-scheme: dark) {
   body {
-    background-color: #1A1210;
+    background-color: #1A0810;
   }
 }
 @media (prefers-reduced-motion: reduce) {

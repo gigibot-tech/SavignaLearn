@@ -55,39 +55,20 @@ async function readJson(response: Response): Promise<{ content?: string; error?:
   }
 }
 
-/** Session JWT against `ai-assist` — not just /auth/v1/health. */
+export function idoAssistProbeFromSession(
+  configured: boolean,
+  accessToken: string | undefined
+): { ok: boolean; detail: string } {
+  if (!configured) return { ok: false, detail: 'not configured' };
+  if (!accessToken) return { ok: false, detail: 'sign in to enable' };
+  return { ok: true, detail: 'signed in' };
+}
+
+/** iDO session JWT is enough to enable the chip. Do not POST an empty `ai-assist` body — that 400s. */
 export async function probeIdoAssist(): Promise<{ ok: boolean; detail: string }> {
-  if (!isIdoAiConfigured()) return { ok: false, detail: 'not configured' };
-  const client = getIdoSupabase();
-  const { data: sessionData } = await client.auth.getSession();
-  const token = sessionData.session?.access_token;
-  if (!token) return { ok: false, detail: 'sign in to enable' };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const response = await fetch(`${idoUrl.replace(/\/$/, '')}/functions/v1/ai-assist`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        apikey: idoAnon,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ feature: 'generic' }),
-      signal: controller.signal,
-    });
-    const parsed = await readJson(response);
-    if (response.status === 401) return { ok: false, detail: 'session expired — sign in again' };
-    if (response.status === 400) return { ok: true, detail: 'signed in' };
-    if (response.status === 503) return { ok: false, detail: parsed.error || 'AI assist not configured' };
-    if (response.ok) return { ok: true, detail: 'ai-assist ok' };
-    return { ok: false, detail: parsed.error || `${response.status}` };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'unreachable';
-    if (message.includes('abort')) return { ok: false, detail: 'ai-assist timed out' };
-    return { ok: false, detail: message };
-  } finally {
-    clearTimeout(timer);
-  }
+  if (!isIdoAiConfigured()) return idoAssistProbeFromSession(false, undefined);
+  const { data } = await getIdoSupabase().auth.getSession();
+  return idoAssistProbeFromSession(true, data.session?.access_token);
 }
 
 export class IdoCoreChatCompletionAdapter implements ChatCompletionPort {

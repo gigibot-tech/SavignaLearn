@@ -25,7 +25,7 @@ export function getVocabularyCardPrompt(
   const languageName = getLanguageName(language);
   const translationLanguageName = getLanguageName(translationLanguage);
   const needsReading = needsReadingAttribute(language);
-  const isJapanese = language === 'JA';
+  const isJapanese = language.toUpperCase() === 'JA';
 
   return {
     systemPrompt: `You are an expert ${languageName} language teacher and vocabulary analyzer.

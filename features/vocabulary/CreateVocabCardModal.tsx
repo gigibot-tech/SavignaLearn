@@ -14,9 +14,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import type { LearningItem, LearningSource } from '@/domain/learning';
 import { learningSourceKey } from '@/domain/learning';
-import { getLanguageName } from '@/gigolingo-shared/languages';
+import { getLanguageName, needsReadingAttribute } from '@/gigolingo-shared/languages';
 import { toGigolingoLangKey } from '@/domain/chat';
-import { createVocabularyWordTap } from '@/adapters/vocabulary';
+import { createVocabularyWordTap, resolveVocabCardLanguage } from '@/adapters/vocabulary';
 import type {
   LearningItemRepository,
   VocabularyCardPort,
@@ -53,9 +53,13 @@ export function CreateVocabCardModal({
 }) {
   const word = item?.word ?? draft?.token ?? '';
   const sentence = item?.sentenceOrig ?? draft?.sentence ?? '';
-  const language = item?.language ?? draft?.language ?? '';
+  const language =
+    item?.language ??
+    (word ? resolveVocabCardLanguage(word, draft?.language) : draft?.language) ??
+    '';
   const source = item?.source ?? draft?.source;
   const langName = language ? getLanguageName(toGigolingoLangKey(language)) : '';
+  const showReading = Boolean(language) && needsReadingAttribute(toGigolingoLangKey(language));
   const title = item && !created ? 'Vocabulary card' : 'Create voc card';
   const status = busy
     ? 'Creating card…'
@@ -117,7 +121,12 @@ export function CreateVocabCardModal({
             <>
               <Field label="Translation" value={item.translation} colors={colors} />
               <Field label="Sentence (EN)" value={item.sentenceEng} colors={colors} />
-              {item.reading ? <Field label="Reading" value={item.reading} colors={colors} /> : null}
+              {showReading || item.reading ? (
+                <Field label="Reading" value={item.reading} colors={colors} />
+              ) : null}
+              {item.sentenceReading ? (
+                <Field label="Sentence reading" value={item.sentenceReading} colors={colors} />
+              ) : null}
               {item.languageLevel ? (
                 <Field label="Level" value={item.languageLevel} colors={colors} />
               ) : null}

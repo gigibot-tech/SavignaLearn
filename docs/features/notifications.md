@@ -18,6 +18,14 @@ while the browser tab is still alive and has received updates.
    shows a browser notification.
 5. Clicking the notification opens `/chat/[id]`.
 
+Live unread counts (independent of the notification toggle):
+
+- New messages increment unread for the other **human** (not the author, not SavignasBoi as a recipient, not delete-for-everyone tombstones).
+- Opening a thread sets that chat’s unread to 0.
+- Muted chats are excluded from the Chats tab / sidebar total.
+- The red badge is the inbox `unreadCount` on each row, the Chats tab/sidebar total, and a best-effort OS app icon badge (`navigator.setAppBadge` on web, `expo-notifications` on native).
+- Incoming friend requests badge the Friends tab / sidebar.
+
 ### Native
 
 The toggle enables **local alerts** via `expo-notifications` (send/app-triggered notifications).

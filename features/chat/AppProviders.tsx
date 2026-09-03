@@ -27,8 +27,9 @@ import {
 import { getFourSomeEmail } from '@/adapters/fourSomeAuth';
 import { getIdoEmail, probeIdoAssist } from '@/adapters/idoAi';
 import { onWebGemmaStatus, probeWebGemma } from '@/adapters/webGemma';
+import { AppearanceProvider } from '@/features/shell/AppearanceProvider';
 import { createAuthPort } from '@/adapters/supabase';
-import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
+import { chatActorIds, chatHydrateAliasIds, chatPersistenceUserId } from '@/adapters/identity';
 import { authStorage } from '@/adapters/authStorage';
 import {
   createTranslationEngine,
@@ -292,6 +293,12 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         email: user.email ?? '',
       });
       memoryFriends.seedForViewer(user.id, { id: user.id, email: user.email });
+      const persistId = chatPersistenceUserId(user);
+      const aliases = chatHydrateAliasIds(user);
+      const hydrator = chat as { hydrateForUser?: (userId: string, aliases?: string[]) => Promise<void> };
+      if (typeof hydrator.hydrateForUser === 'function') {
+        await hydrator.hydrateForUser(persistId, aliases);
+      }
       const history = core.historyStore as { hydrateForUser?: (userId: string) => Promise<void> };
       if (typeof history.hydrateForUser === 'function') {
         for (const id of actorIds) {
@@ -304,11 +311,13 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   }, [user, bumpFriends, core.chat]);
 
   return (
-    <ServicesContext.Provider value={services}>
-      <AuthContext.Provider value={{ user, ready, justSignedIn, markJustSignedIn, clearJustSignedIn }}>
-        {children}
-      </AuthContext.Provider>
-    </ServicesContext.Provider>
+    <AppearanceProvider>
+      <ServicesContext.Provider value={services}>
+        <AuthContext.Provider value={{ user, ready, justSignedIn, markJustSignedIn, clearJustSignedIn }}>
+          {children}
+        </AuthContext.Provider>
+      </ServicesContext.Provider>
+    </AppearanceProvider>
   );
 }
 

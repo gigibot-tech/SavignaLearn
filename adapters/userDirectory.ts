@@ -19,6 +19,7 @@ import {
   normalizeEmail,
   normalizeUsername,
   parseFriendIdentifier,
+  uniqueProfilesByPerson,
   type ParsedFriendIdentifier,
   type PublicProfile,
 } from '@/domain/friends';
@@ -85,10 +86,17 @@ export class InMemoryUserDirectory implements UserDirectoryPort {
     return this.profiles.get(id) ?? null;
   }
 
-  async findByUsername(username: string): Promise<PublicProfile | null> {
+  async listByUsername(username: string): Promise<PublicProfile[]> {
     const needle = normalizeUsername(username);
-    if (!needle) return null;
-    return [...this.profiles.values()].find((item) => item.username === needle) ?? null;
+    if (!needle) return [];
+    return uniqueProfilesByPerson(
+      [...this.profiles.values()].filter((item) => item.username === needle)
+    );
+  }
+
+  async findByUsername(username: string): Promise<PublicProfile | null> {
+    const hits = await this.listByUsername(username);
+    return hits.length === 1 ? hits[0] : null;
   }
 }
 
@@ -113,12 +121,28 @@ export class CompositeUserDirectory implements UserDirectoryPort {
   }
 
   async findByUsername(username: string): Promise<PublicProfile | null> {
-    for (const dir of this.dirs) {
-      const hit = await dir.findByUsername(username);
-      if (hit) return hit;
-    }
-    return null;
+    const hits = await this.listByUsername(username);
+    return hits.length === 1 ? hits[0] : null;
   }
+
+  async listByUsername(username: string): Promise<PublicProfile[]> {
+    const all: PublicProfile[] = [];
+    for (const dir of this.dirs) {
+      all.push(...(await dir.listByUsername(username)));
+    }
+    return uniqueProfilesByPerson(all);
+  }
+}
+
+function usernameForRow(row: {
+  id: string;
+  username?: string | null;
+  display_name?: string | null;
+}): string {
+  if (row.id === IDO_SAVINA_USER_ID) return 'savina';
+  if (row.id === IDO_LEARN_USER_ID) return 'learn';
+  if (row.id === DEMO_LEARNER_IDO_USER_ID || row.id === DEMO_LEARNER_ID) return 'learner';
+  return normalizeUsername(row.username || row.display_name || row.id.slice(0, 8));
 }
 
 function toPublicProfile(row: {
@@ -126,7 +150,7 @@ function toPublicProfile(row: {
   username?: string | null;
   display_name?: string | null;
 }): PublicProfile {
-  const username = normalizeUsername(row.username || row.display_name || row.id.slice(0, 8));
+  const username = usernameForRow(row);
   const email =
     row.id === DEMO_LEARNER_IDO_USER_ID || username === 'learner'
       ? DEMO_LEARNER_EMAIL
@@ -160,31 +184,44 @@ export class IdoProfilesDirectory implements UserDirectoryPort {
     }
     const local = normalizeUsername(normalized.split('@')[0] ?? '');
     if (!local) return null;
-    return this.findByUsername(local);
+    const hits = uniqueProfilesByPerson(await this.listByUsername(local));
+    return hits.length === 1 ? hits[0] : null;
   }
 
   async findById(id: string): Promise<PublicProfile | null> {
-    return this.query('id', id);
+    return this.queryOne('id', id);
+  }
+
+  async listByUsername(username: string): Promise<PublicProfile[]> {
+    const needle = normalizeUsername(username);
+    if (!needle) return [];
+    return uniqueProfilesByPerson(await this.queryMany('username', needle));
   }
 
   async findByUsername(username: string): Promise<PublicProfile | null> {
-    const needle = normalizeUsername(username);
-    if (!needle) return null;
-    return this.query('username', needle);
+    const hits = await this.listByUsername(username);
+    return hits.length === 1 ? hits[0] : null;
   }
 
-  private async query(column: 'id' | 'username', value: string): Promise<PublicProfile | null> {
-    if (!isIdoAiConfigured()) return null;
+  private async queryOne(column: 'id' | 'username', value: string): Promise<PublicProfile | null> {
+    const rows = await this.queryMany(column, value);
+    return rows[0] ?? null;
+  }
+
+  private async queryMany(column: 'id' | 'username', value: string): Promise<PublicProfile[]> {
+    if (!isIdoAiConfigured()) return [];
     try {
       const { data, error } = await getIdoSupabase()
         .from('profiles')
         .select('id, username, display_name')
         .eq(column, value)
-        .maybeSingle();
-      if (error || !data) return null;
-      return toPublicProfile(data as { id: string; username?: string | null; display_name?: string | null });
+        .limit(25);
+      if (error || !data?.length) return [];
+      return (
+        data as Array<{ id: string; username?: string | null; display_name?: string | null }>
+      ).map(toPublicProfile);
     } catch {
-      return null;
+      return [];
     }
   }
 }

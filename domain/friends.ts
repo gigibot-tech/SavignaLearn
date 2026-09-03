@@ -33,9 +33,14 @@ export interface FriendRow {
   username: string;
   displayName: string;
   email: string;
+  /** `@handle · email` when the handle is unique; otherwise the email alone. */
+  handleLabel: string;
+  /** Inbox/thread title: display name, or email when name/handle is shared. */
+  inboxTitle: string;
   kind: FriendRowKind;
   inconsistent: boolean;
   inconsistency: FriendInconsistency | null;
+  createdAt: string;
 }
 
 export type DirectoryPresence = {
@@ -55,6 +60,8 @@ export const IDO_LEARN_USER_ID = '4ca56a24-141c-425b-a1d3-0b5cb324cd2f';
 export const IDO_SAVINA_EMAIL = 'learn@savina.special';
 export const IDO_SAVINA_USER_ID = '93ad4a02-25a7-4787-ae01-a40c3000d637';
 export const ICESTORM_PROFILE_ID = 'friend-icestormfroste';
+/** Live iDO Auth id for icestormfroste@gmail.com (iDO! Ai Trial). */
+export const ICESTORM_IDO_USER_ID = '826f721f-bdf4-4dbe-9136-c7264c03d8e9';
 export const ICESTORM_EMAIL = 'icestormfroste@gmail.com';
 export const ICESTORM_USERNAME = 'icestormfroste';
 
@@ -99,7 +106,8 @@ export type FriendRequestError =
   | 'malformed_link'
   | 'missing_email'
   | 'already_friends'
-  | 'already_requested';
+  | 'already_requested'
+  | 'username_ambiguous';
 
 export class FriendRequestFailed extends Error {
   readonly error: FriendRequestError;
@@ -193,6 +201,121 @@ export function profileEmail(profile: PublicProfile | null | undefined): string 
   return EMAIL_RE.test(email) ? email : null;
 }
 
+/** Stable handle for known accounts; otherwise the email local-part. */
+export function usernameFromEmail(email: string): string {
+  const normalized = normalizeEmail(email);
+  if (normalized === DEMO_LEARNER_EMAIL) return 'learner';
+  if (normalized === IDO_LEARN_EMAIL) return 'learn';
+  if (normalized === IDO_SAVINA_EMAIL) return 'savina';
+  if (normalized === ICESTORM_EMAIL) return ICESTORM_USERNAME;
+  return normalizeUsername(normalized.split('@')[0] ?? '');
+}
+
+/** Same person across stub/live ids: prefer email, else user id. */
+export function personKey(profile: { id: string; email?: string }): string {
+  const email = profile.email ? normalizeEmail(profile.email) : '';
+  return EMAIL_RE.test(email) ? email : profile.id;
+}
+
+export function uniqueProfilesByPerson(profiles: Iterable<PublicProfile>): PublicProfile[] {
+  const seen = new Map<string, PublicProfile>();
+  for (const profile of profiles) {
+    const key = personKey(profile);
+    if (!seen.has(key)) seen.set(key, profile);
+  }
+  return [...seen.values()];
+}
+
+export function profilesMatchingUsername(
+  profiles: Iterable<PublicProfile>,
+  username: string
+): PublicProfile[] {
+  const needle = normalizeUsername(username);
+  if (!needle) return [];
+  return uniqueProfilesByPerson(
+    [...profiles].filter((item) => normalizeUsername(item.username) === needle)
+  );
+}
+
+/** Usernames that belong to two or more distinct people (distinct emails/ids). */
+export function ambiguousUsernames(profiles: Iterable<PublicProfile>): Set<string> {
+  const keysByUsername = new Map<string, Set<string>>();
+  for (const profile of profiles) {
+    const username = normalizeUsername(profile.username);
+    if (!username) continue;
+    const set = keysByUsername.get(username) ?? new Set<string>();
+    set.add(personKey(profile));
+    keysByUsername.set(username, set);
+  }
+  const out = new Set<string>();
+  for (const [username, keys] of keysByUsername) {
+    if (keys.size > 1) out.add(username);
+  }
+  return out;
+}
+
+export function ambiguousDisplayNames(profiles: Iterable<PublicProfile>): Set<string> {
+  const keysByName = new Map<string, Set<string>>();
+  for (const profile of profiles) {
+    const name = profile.displayName.trim().toLowerCase();
+    if (!name) continue;
+    const set = keysByName.get(name) ?? new Set<string>();
+    set.add(personKey(profile));
+    keysByName.set(name, set);
+  }
+  const out = new Set<string>();
+  for (const [name, keys] of keysByName) {
+    if (keys.size > 1) out.add(name);
+  }
+  return out;
+}
+
+export function friendIdentitySubtitle(
+  person: Pick<PublicProfile, 'username' | 'email'>,
+  directory: Iterable<PublicProfile>
+): string {
+  const username = normalizeUsername(person.username);
+  const email = normalizeEmail(person.email);
+  if (!username || ambiguousUsernames(directory).has(username)) return email;
+  return email ? `@${username} · ${email}` : `@${username}`;
+}
+
+export function inboxPartnerTitle(
+  person: PublicProfile,
+  directory: Iterable<PublicProfile>
+): string {
+  const email = normalizeEmail(person.email);
+  const username = normalizeUsername(person.username);
+  const display = person.displayName.trim();
+  if (
+    (username && ambiguousUsernames(directory).has(username)) ||
+    (display && ambiguousDisplayNames(directory).has(display.toLowerCase()))
+  ) {
+    return email || display || `@${username}`;
+  }
+  return display || (username ? `@${username}` : email);
+}
+
+export function publicIdentityLabel(
+  person: Pick<PublicProfile, 'username' | 'email'>,
+  directory: Iterable<PublicProfile>
+): string {
+  const username = normalizeUsername(person.username);
+  const email = normalizeEmail(person.email);
+  if (!username || ambiguousUsernames(directory).has(username)) return email || (username ? `@${username}` : '');
+  return `@${username}`;
+}
+
+export function publicIdentityCopyValue(
+  person: Pick<PublicProfile, 'username' | 'email'>,
+  directory: Iterable<PublicProfile>
+): string {
+  const username = normalizeUsername(person.username);
+  const email = normalizeEmail(person.email);
+  if (!username || ambiguousUsernames(directory).has(username)) return email;
+  return username;
+}
+
 /** A friend is inconsistent when they vanished from a directory or lost their email. */
 export function friendInconsistency(presence: DirectoryPresence): FriendInconsistency | null {
   const dir = dualDirectoryError(presence);
@@ -244,7 +367,8 @@ export function listFriendRows(
   existing: Friendship[],
   profiles: PublicProfile[],
   viewerId: string,
-  presenceByUserId?: Map<string, DirectoryPresence>
+  presenceByUserId?: Map<string, DirectoryPresence>,
+  directory: Iterable<PublicProfile> = profiles
 ): FriendRow[] {
   const byId = new Map(profiles.map((p) => [p.id, p]));
   const rows: FriendRow[] = [];
@@ -262,15 +386,21 @@ export function listFriendRows(
     };
     const inconsistency = friendInconsistency(presence);
     const email = profileEmail(profile) ?? profileEmail(presence.savigna) ?? profileEmail(presence.ido) ?? '';
+    const username = profile?.username ?? otherId.slice(0, 8);
+    const displayName = profile?.displayName ?? profile?.username ?? 'Friend';
+    const labeled = profile ?? { id: otherId, username, displayName, email };
     rows.push({
       friendshipId: item.id,
       userId: otherId,
-      username: profile?.username ?? otherId.slice(0, 8),
-      displayName: profile?.displayName ?? profile?.username ?? 'Friend',
+      username,
+      displayName,
       email,
+      handleLabel: friendIdentitySubtitle({ username, email }, directory),
+      inboxTitle: profile ? inboxPartnerTitle(profile, directory) : inboxPartnerTitle(labeled, directory),
       kind,
       inconsistent: Boolean(inconsistency),
       inconsistency,
+      createdAt: item.createdAt,
     });
   }
   const order: Record<FriendRowKind, number> = { incoming: 0, outgoing: 1, accepted: 2 };
@@ -300,6 +430,8 @@ export function friendRequestErrorMessage(error: FriendRequestError): string {
       return 'Already friends';
     case 'already_requested':
       return 'Request already sent';
+    case 'username_ambiguous':
+      return 'That username matches more than one person — use their email';
   }
 }
 
@@ -336,9 +468,17 @@ export function isDemoLearnerIdentity(user: { id?: string; email?: string }): bo
 export function isIcestormIdentity(user: { id?: string; email?: string; username?: string }): boolean {
   return (
     user.id === ICESTORM_PROFILE_ID ||
+    user.id === ICESTORM_IDO_USER_ID ||
     normalizeEmail(user.email ?? '') === ICESTORM_EMAIL ||
     normalizeUsername(user.username ?? '') === ICESTORM_USERNAME
   );
+}
+
+/** Stub friend ids → live iDO ids so both people open the same DM row. */
+export function canonicalChatActorId(id: string): string {
+  if (id === ICESTORM_PROFILE_ID) return ICESTORM_IDO_USER_ID;
+  if (id === DEMO_LEARNER_ID) return DEMO_LEARNER_IDO_USER_ID;
+  return id;
 }
 
 /** Insert or upgrade a mutual accepted pair. Never friends the learning bot. */
@@ -378,7 +518,7 @@ export function profileFromEmailLocalPart(
   displayName?: string
 ): PublicProfile {
   const normalized = normalizeEmail(email);
-  const username = normalizeUsername(normalized.split('@')[0] ?? id);
+  const username = usernameFromEmail(normalized) || normalizeUsername(id);
   return {
     id,
     email: normalized,

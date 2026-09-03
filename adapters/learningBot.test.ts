@@ -33,6 +33,13 @@ function fakeChat(): ChatRepository & { conversations: Conversation[] } {
     async appendMessage(message) {
       return message;
     },
+    async deleteMessage() {
+      return null;
+    },
+    async listHiddenMessageIds() {
+      return [];
+    },
+    async markConversationRead() {},
     async updateReceipt() {},
     async saveTranslations() {},
     async listTranslations() {

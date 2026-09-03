@@ -274,6 +274,31 @@ describe('translationMismatch', () => {
     expect(translationRetryWhy('same_as_source')).toBe('Language mismatch');
   });
 
+  it('clears language mismatch once sourceLang matches the real language', () => {
+    const sourceText = 'No te envío fotos de mis huevos, eso es privado.';
+    const message = sourceMessageFromText({
+      id: 'm-retag',
+      conversationId: 'c1',
+      authorId: 'them',
+      sourceLang: 'es',
+      sourceText,
+    });
+    expect(
+      translationMismatch({
+        message,
+        translations: [
+          {
+            lineIndex: 0,
+            targetLang: 'en',
+            mode: 'lines',
+            text: "I'm not sending you pictures of my eggs, that's private.",
+          },
+        ],
+        viewpoint: { native: 'en', learning: 'es', displayMode: 'lines' },
+      })
+    ).toBeNull();
+  });
+
   it('flags missing native line when native should differ from source', () => {
     const message = sourceMessageFromText({
       id: 'm-in',
@@ -458,6 +483,19 @@ describe('learning item source', () => {
       })
     ).toBeUndefined();
     expect(findMatchingLearningItem([first], { word: 'Hallo', language: 'es', source })).toBeUndefined();
+  });
+
+  it('builds the voc card id from word, lang, and chat line source', () => {
+    const source = {
+      kind: 'chat' as const,
+      conversationId: 'dm:826f721f-bdf4-4dbe-9136-c7264c03d8e9:93ad4a02-25a7-4787-ae01-a40c3000d637',
+      messageId: 'ba95d3b3-679d-4e02-b2de-10bfec161ec6',
+      lineIndex: 1,
+    };
+    expect(learningItemIdentityKey('m', 'en', source)).toBe(
+      'm|en|chat:dm:826f721f-bdf4-4dbe-9136-c7264c03d8e9:93ad4a02-25a7-4787-ae01-a40c3000d637:ba95d3b3-679d-4e02-b2de-10bfec161ec6:1'
+    );
+    expect(learningSourceKey(source)).toContain('ba95d3b3-679d-4e02-b2de-10bfec161ec6:1');
   });
 
   it('maps media sources to sourceMediaId', () => {

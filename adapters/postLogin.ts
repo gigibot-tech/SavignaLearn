@@ -8,11 +8,18 @@ export function learningBotHref(conversationId: string): `/chat/${string}` {
   return `/chat/${conversationId}`;
 }
 
+export function profileHref(userId: string, conversationId?: string): string {
+  const path = `/u/${encodeURIComponent(userId)}`;
+  return conversationId ? `${path}?chat=${encodeURIComponent(conversationId)}` : path;
+}
+
 export function routeParam(value: string | string[] | undefined, fallback: string): string {
   if (Array.isArray(value)) return value[0] || fallback;
   return value || fallback;
 }
 
 export function needsPostLoginBotRedirect(pathname: string, conversationId: string): boolean {
-  return pathname !== learningBotHref(conversationId);
+  if (pathname === learningBotHref(conversationId)) return false;
+  if (pathname.startsWith('/u/')) return false;
+  return true;
 }

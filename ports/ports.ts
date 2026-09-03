@@ -11,6 +11,7 @@ import type {
   ReceiptStatus,
   SourceMessage,
 } from '@/domain/chat';
+import type { MessageDeleteScope } from '@/domain/messageDelete';
 import type { LearningItem, LearningSource, MediaCompatibleBlock } from '@/domain/learning';
 import type { AsymmetricLanguageContext, ChatHistoryStore } from '@/domain/pipeline';
 import type { FriendRow, Friendship, PublicProfile } from '@/domain/friends';
@@ -19,6 +20,7 @@ export interface ChatRepository {
   listConversations(userId: string): Promise<Conversation[]>;
   getConversation(id: string): Promise<Conversation | null>;
   createConversation(input: {
+    id?: string;
     participantIds: string[];
     participants: Conversation['participants'];
     aiEnabled: boolean;
@@ -26,6 +28,14 @@ export interface ChatRepository {
   }): Promise<Conversation>;
   listMessages(conversationId: string): Promise<SourceMessage[]>;
   appendMessage(message: SourceMessage): Promise<SourceMessage>;
+  deleteMessage(input: {
+    messageId: string;
+    conversationId: string;
+    actorId: string;
+    scope: MessageDeleteScope;
+    viewerIds?: string[];
+  }): Promise<SourceMessage | null>;
+  listHiddenMessageIds(userId: string): Promise<string[]>;
   updateReceipt(messageId: string, receipt: ReceiptStatus): Promise<void>;
   saveTranslations(messageId: string, translations: LineTranslation[]): Promise<void>;
   listTranslations(messageId: string): Promise<LineTranslation[]>;
@@ -37,6 +47,7 @@ export interface ChatRepository {
     conversationId: string,
     onChange: (messages: SourceMessage[]) => void
   ): () => void;
+  markConversationRead(conversationId: string, userIds: string[]): Promise<void>;
 }
 
 export interface TranslationEngine {
@@ -168,6 +179,7 @@ export interface UserDirectoryPort {
   findByEmail(email: string): Promise<PublicProfile | null>;
   findById(id: string): Promise<PublicProfile | null>;
   findByUsername(username: string): Promise<PublicProfile | null>;
+  listByUsername(username: string): Promise<PublicProfile[]>;
 }
 
 export interface FriendsRepository {

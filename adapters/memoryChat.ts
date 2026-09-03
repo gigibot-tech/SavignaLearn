@@ -11,12 +11,19 @@ import {
   type ReceiptStatus,
   type SourceMessage,
 } from '@/domain/chat';
+import {
+  canDeleteForEveryone,
+  previewAfterDelete,
+  tombstoneMessage,
+} from '@/domain/messageDelete';
+import { unreadRecipients } from '@/domain/unread';
 import type { ChatRepository } from '@/ports/ports';
 import {
   applySnapshot,
   chatStorageKey,
   humanParticipantIds,
   parseChatSnapshot,
+  remapChatActorId,
   snapshotForUser,
   type ChatKv,
 } from '@/adapters/chatPersistence';
@@ -25,6 +32,8 @@ export class InMemoryChatRepository implements ChatRepository {
   conversations: Conversation[] = [];
   messages = new Map<string, SourceMessage[]>();
   translations = new Map<string, LineTranslation[]>();
+  private hides = new Map<string, Set<string>>();
+  private unread = new Map<string, Map<string, number>>();
   private listeners = new Map<string, Array<(messages: SourceMessage[]) => void>>();
   private readonly hydratedUsers = new Set<string>();
   private hydrateInFlight: Promise<void> | null = null;
@@ -34,14 +43,31 @@ export class InMemoryChatRepository implements ChatRepository {
 
   constructor(private readonly kv?: ChatKv) {}
 
-  async hydrateForUser(userId: string): Promise<void> {
+  async hydrateForUser(userId: string, aliases: string[] = []): Promise<void> {
     this.lastUserId = userId;
-    if (!this.kv || this.hydratedUsers.has(userId)) return;
+    const extra = [...new Set(aliases.filter((id) => id && id !== userId))];
     if (this.hydrateInFlight) {
       await this.hydrateInFlight;
-      if (this.hydratedUsers.has(userId)) return;
     }
-    this.hydrateInFlight = this.loadUser(userId);
+    this.hydrateInFlight = (async () => {
+      for (const id of extra) {
+        if (!this.hydratedUsers.has(id)) await this.loadUser(id);
+      }
+      if (!this.hydratedUsers.has(userId)) await this.loadUser(userId);
+      if (extra.length > 0) {
+        for (const fromId of extra) {
+          remapChatActorId({
+            conversations: this.conversations,
+            messages: this.messages,
+            fromId,
+            toId: userId,
+          });
+          this.mergeHides(fromId, userId);
+          this.mergeUnread(fromId, userId);
+        }
+        await this.writeUsers([userId, ...extra]);
+      }
+    })();
     try {
       await this.hydrateInFlight;
     } finally {
@@ -117,7 +143,22 @@ export class InMemoryChatRepository implements ChatRepository {
     const list = userId
       ? this.conversations.filter((item) => item.participantIds.includes(userId))
       : [...this.conversations];
-    return list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const hidden = userId ? this.hiddenSet(userId) : new Set<string>();
+    return list
+      .map((item) =>
+        userId
+          ? {
+              ...item,
+              lastMessagePreview: previewAfterDelete(
+                this.messages.get(item.id) ?? [],
+                hidden,
+                conversationPreviewFor
+              ),
+              unreadCount: this.unreadCountFor(userId, item.id),
+            }
+          : item
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   async getConversation(id: string): Promise<Conversation | null> {
@@ -127,14 +168,19 @@ export class InMemoryChatRepository implements ChatRepository {
   }
 
   async createConversation(input: {
+    id?: string;
     participantIds: string[];
     participants: Conversation['participants'];
     aiEnabled: boolean;
     title?: string;
   }): Promise<Conversation> {
     await this.awaitHydrate();
+    if (input.id) {
+      const existing = this.conversations.find((item) => item.id === input.id);
+      if (existing) return existing;
+    }
     const conversation: Conversation = {
-      id: `c-${Date.now()}-${++this.nextConversationSeq}`,
+      id: input.id ?? `c-${Date.now()}-${++this.nextConversationSeq}`,
       participantIds: input.participantIds,
       participants: input.participants,
       aiEnabled: input.aiEnabled,
@@ -160,6 +206,7 @@ export class InMemoryChatRepository implements ChatRepository {
     await this.awaitHydrate();
     const list = this.messages.get(message.conversationId) ?? [];
     const existing = list.findIndex((item) => item.id === message.id);
+    const isNew = existing < 0;
     if (existing >= 0) {
       list[existing] = message;
     } else {
@@ -170,10 +217,64 @@ export class InMemoryChatRepository implements ChatRepository {
     if (conversation) {
       conversation.lastMessagePreview = conversationPreviewFor(message);
       conversation.updatedAt = message.createdAt;
+      if (isNew && !message.deletedAt) this.bumpUnread(conversation, message.authorId);
     }
     await this.persistConversation(message.conversationId);
     this.emit(message.conversationId);
     return message;
+  }
+
+  async deleteMessage(input: {
+    messageId: string;
+    conversationId: string;
+    actorId: string;
+    scope: 'me' | 'everyone';
+    viewerIds?: string[];
+  }): Promise<SourceMessage | null> {
+    await this.awaitHydrate();
+    this.lastUserId = input.actorId;
+    const list = this.messages.get(input.conversationId) ?? [];
+    const found = list.find((item) => item.id === input.messageId);
+    if (!found) return null;
+    if (input.scope === 'me') {
+      this.hiddenSet(input.actorId).add(input.messageId);
+      await this.persistIds([input.actorId]);
+      this.emit(input.conversationId);
+      return found;
+    }
+    const viewerIds = input.viewerIds ?? [input.actorId];
+    if (!canDeleteForEveryone(found, viewerIds)) {
+      throw new Error('Cannot delete this message for everyone');
+    }
+    const tombstone = tombstoneMessage(found);
+    const index = list.findIndex((item) => item.id === input.messageId);
+    list[index] = tombstone;
+    this.messages.set(input.conversationId, list);
+    this.translations.delete(input.messageId);
+    const conversation = this.conversations.find((item) => item.id === input.conversationId);
+    if (conversation) {
+      const last = list[list.length - 1];
+      conversation.lastMessagePreview = last ? conversationPreviewFor(last) : undefined;
+      conversation.updatedAt = tombstone.deletedAt ?? conversation.updatedAt;
+    }
+    await this.persistConversation(input.conversationId);
+    this.emit(input.conversationId);
+    return tombstone;
+  }
+
+  async listHiddenMessageIds(userId: string): Promise<string[]> {
+    await this.hydrateForUser(userId);
+    return [...this.hiddenSet(userId)];
+  }
+
+  async markConversationRead(conversationId: string, userIds: string[]): Promise<void> {
+    await this.awaitHydrate();
+    const unique = [...new Set(userIds.filter(Boolean))];
+    for (const userId of unique) {
+      this.unreadFor(userId).set(conversationId, 0);
+    }
+    if (unique[0]) this.lastUserId = unique[0];
+    await this.persistIds(unique);
   }
 
   async updateReceipt(messageId: string, receipt: ReceiptStatus): Promise<void> {
@@ -240,6 +341,55 @@ export class InMemoryChatRepository implements ChatRepository {
     }
   }
 
+  private hiddenSet(userId: string): Set<string> {
+    let set = this.hides.get(userId);
+    if (!set) {
+      set = new Set();
+      this.hides.set(userId, set);
+    }
+    return set;
+  }
+
+  private mergeHides(fromId: string, toId: string): void {
+    const from = this.hides.get(fromId);
+    if (!from || fromId === toId) return;
+    const to = this.hiddenSet(toId);
+    for (const id of from) to.add(id);
+    this.hides.delete(fromId);
+  }
+
+  private unreadFor(userId: string): Map<string, number> {
+    let map = this.unread.get(userId);
+    if (!map) {
+      map = new Map();
+      this.unread.set(userId, map);
+    }
+    return map;
+  }
+
+  private unreadCountFor(userId: string, conversationId: string): number {
+    const stored = this.unreadFor(userId).get(conversationId);
+    if (stored != null) return stored;
+    return this.conversations.find((item) => item.id === conversationId)?.unreadCount ?? 0;
+  }
+
+  private bumpUnread(conversation: Conversation, authorId: string): void {
+    for (const userId of unreadRecipients(conversation.participantIds, authorId)) {
+      const map = this.unreadFor(userId);
+      map.set(conversation.id, (map.get(conversation.id) ?? 0) + 1);
+    }
+  }
+
+  private mergeUnread(fromId: string, toId: string): void {
+    const from = this.unread.get(fromId);
+    if (!from || fromId === toId) return;
+    const to = this.unreadFor(toId);
+    for (const [conversationId, count] of from) {
+      to.set(conversationId, Math.max(to.get(conversationId) ?? 0, count));
+    }
+    this.unread.delete(fromId);
+  }
+
   private conversationIdForMessage(messageId: string): string | undefined {
     for (const [conversationId, list] of this.messages) {
       if (list.some((item) => item.id === messageId)) return conversationId;
@@ -263,6 +413,15 @@ export class InMemoryChatRepository implements ChatRepository {
           this.translations,
           snapshot
         );
+        if (snapshot.hiddenMessageIds?.length) {
+          const set = this.hiddenSet(userId);
+          for (const id of snapshot.hiddenMessageIds) set.add(id);
+        }
+        const unreadMap = this.unreadFor(userId);
+        for (const conversation of snapshot.conversations) {
+          const count = snapshot.unreadCounts?.[conversation.id] ?? conversation.unreadCount ?? 0;
+          if (count > 0) unreadMap.set(conversation.id, Math.max(unreadMap.get(conversation.id) ?? 0, count));
+        }
       }
     } catch {
       // Keep going with whatever is already in memory.
@@ -292,7 +451,14 @@ export class InMemoryChatRepository implements ChatRepository {
   private async writeUsers(userIds: string[]): Promise<void> {
     if (!this.kv) return;
     for (const userId of userIds) {
-      const snapshot = snapshotForUser(this.conversations, this.messages, this.translations, userId);
+      const snapshot = snapshotForUser(
+        this.conversations,
+        this.messages,
+        this.translations,
+        userId,
+        [...this.hiddenSet(userId)],
+        Object.fromEntries(this.unreadFor(userId))
+      );
       await this.kv.setItem(chatStorageKey(userId), JSON.stringify(snapshot));
     }
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { chatActorIds, chatPersistenceUserId, isChatSelf, mergeIdentitySessions } from './identity';
+import { chatActorIds, chatHydrateAliasIds, chatPersistenceUserId, isChatSelf, mergeIdentitySessions } from './identity';
+import { ICESTORM_EMAIL, ICESTORM_IDO_USER_ID, ICESTORM_PROFILE_ID } from '@/domain/friends';
 
 describe('mixed fourSome + iDO identity', () => {
   it('requires at least one provider session', () => {
@@ -29,5 +30,17 @@ describe('mixed fourSome + iDO identity', () => {
     expect(chatActorIds(user!)).toEqual(['ido-1', '16e1c5d7-2908-44be-b53a-b7c0f0a00001']);
     expect(isChatSelf(user, 'ido-1')).toBe(true);
     expect(isChatSelf(user, '16e1c5d7-2908-44be-b53a-b7c0f0a00001')).toBe(true);
+  });
+
+  it('loads the icestorm stub KV key after a live iDO login', () => {
+    expect(
+      chatHydrateAliasIds({
+        id: 'live-ice',
+        email: ICESTORM_EMAIL,
+      })
+    ).toEqual(expect.arrayContaining([ICESTORM_PROFILE_ID, ICESTORM_IDO_USER_ID, 'live-ice']));
+    expect(
+      isChatSelf({ id: ICESTORM_IDO_USER_ID, idoUserId: ICESTORM_IDO_USER_ID, email: ICESTORM_EMAIL }, ICESTORM_PROFILE_ID)
+    ).toBe(true);
   });
 });

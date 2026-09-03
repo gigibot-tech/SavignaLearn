@@ -14,7 +14,7 @@ Sign in with that pair to use the iDO AI chip (not the offline Demo backend). Re
 Other iDO accounts:
 
 - Email: `learn@savigna.local` · Password: `learn` · username `@learn`
-- Email: `learn@savina.special` · Password: `learn` · username `@savina`
+- Email: `learn@savina.special` · Password: `learn` · username `@savina` (not `@learn` — that handle is already taken). If a username is shared, the app shows **email** instead.
 
 After sign-in the app opens **Bot** (not Settings, and not the invite empty-home). Sign-out resets the URL to chats home so the next login does not restore a stale tab.
 

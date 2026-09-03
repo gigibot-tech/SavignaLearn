@@ -16,6 +16,7 @@ import {
   buildDetectThenTranslatePrompt,
   buildTranslationPayload,
   createChatHistoryRecord,
+  dropIdentityLineTranslations,
   extractChatReplyText,
   mergeLineTranslations,
   mergeTranslationMaps,
@@ -139,6 +140,9 @@ describe('ChatHistoryRecord state machine (TDD before Supabase)', () => {
     expect(record.pipelineState).toBe('persisted');
     expect(record.providerUsed).toBe('onprem');
     expect(record.translations).toHaveLength(1);
+
+    record = transitionChatHistory(record, { type: 'start_detect' });
+    expect(record.pipelineState).toBe('detecting');
   });
 
   it('supports Standard ↔ Birkenbihl mode switch only from idle states', () => {
@@ -682,5 +686,59 @@ describe('retryBubbleTranslations', () => {
     const native1 = next.find((r) => r.targetLang === 'en' && r.lineIndex === 1)?.text;
     expect(native0).toBe('NATIVE0_NEW');
     expect(native1).toBe('NATIVE1_OK');
+  });
+
+  it('re-detects Spanish tagged as EN, drops the identity ES row, and keeps a real EN gloss', async () => {
+    const store = new InMemoryChatHistoryStore();
+    const sourceText = 'No te envío fotos de mis huevos, eso es privado.';
+    const message = sourceMessageFromText({
+      id: 'm-es-as-en',
+      conversationId: 'c1',
+      authorId: 'them',
+      sourceLang: 'en',
+      sourceText,
+      kind: 'user',
+    });
+    const next = await retryBubbleTranslations({
+      message,
+      existingTranslations: [
+        { lineIndex: 0, targetLang: 'es', mode: 'lines', text: sourceText },
+        {
+          lineIndex: 0,
+          targetLang: 'en',
+          mode: 'lines',
+          text: "I'm not sending you pictures of my eggs, that's private.",
+        },
+      ],
+      asymmetric,
+      mode: 'standard',
+      engine: new EchoTranslationEngine(),
+      historyStore: store,
+      learningLang: 'es',
+      nativeLang: 'en',
+      mismatchReason: 'same_as_source',
+    });
+    expect(message.sourceLang).toBe('es');
+    expect(message.sourceText).toBe(sourceText);
+    expect(next.some((row) => row.targetLang === 'es' && row.text === sourceText)).toBe(false);
+    expect(next.find((row) => row.targetLang === 'en' && row.mode === 'lines')?.text).toBe(
+      "I'm not sending you pictures of my eggs, that's private."
+    );
+  });
+});
+
+describe('dropIdentityLineTranslations', () => {
+  it('removes a Standard row that copies source into the source language', () => {
+    const source = 'No te envío fotos.';
+    expect(
+      dropIdentityLineTranslations(
+        [
+          { lineIndex: 0, targetLang: 'es', mode: 'lines', text: source },
+          { lineIndex: 0, targetLang: 'en', mode: 'lines', text: 'I am not sending photos.' },
+        ],
+        source,
+        'es'
+      )
+    ).toEqual([{ lineIndex: 0, targetLang: 'en', mode: 'lines', text: 'I am not sending photos.' }]);
   });
 });

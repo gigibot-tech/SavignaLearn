@@ -13,7 +13,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#FFF6F0",
+        "backgroundColor": "#FFF5F8",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -27,8 +27,8 @@
       "favicon": "./assets/images/favicon.png",
       "name": "SavignaLearn",
       "shortName": "Savigna",
-      "themeColor": "#BD403F",
-      "backgroundColor": "#FFF1E6",
+      "themeColor": "#C43B6F",
+      "backgroundColor": "#FFF5F8",
       "display": "standalone",
       "lang": "en"
     },
@@ -44,7 +44,7 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#FFF1E6"
+          "backgroundColor": "#FFF5F8"
         }
       ],
       "expo-notifications"

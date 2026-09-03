@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LEARNING_BOT_USER_ID, sourceMessageFromText } from '@/domain/chat';
+import { ICESTORM_PROFILE_ID } from '@/domain/friends';
 import { ensureLearningBotChat } from './learningBot';
 import { InMemoryChatRepository } from './memoryChat';
 import { MemoryChatKv, chatStorageKey, loadConversationThread, parseChatSnapshot } from './chatPersistence';
@@ -232,5 +233,37 @@ describe('persisted chat history store', () => {
     expect(loaded?.message.sourceText).toBe('Hola');
     expect(loaded?.translations.find((row) => row.mode === 'lines')?.text).toBe('Hi');
     expect(loaded?.translations.find((row) => row.mode === 'birkenbihl')?.text).toBe('Hola [Hi]');
+  });
+
+  it('lets icestormfroste hydrate a DM written to the stub friend id', async () => {
+    const kv = new MemoryChatKv();
+    const savina = new InMemoryChatRepository(kv);
+    const conversation = await savina.createConversation({
+      participantIds: ['savina-live', ICESTORM_PROFILE_ID],
+      participants: [
+        { userId: 'savina-live', nativeLang: 'en', learningLang: 'de' },
+        { userId: ICESTORM_PROFILE_ID, nativeLang: 'de', learningLang: 'en' },
+      ],
+      aiEnabled: true,
+      title: 'icestormfroste',
+    });
+    await savina.appendMessage(
+      sourceMessageFromText({
+        id: 'from-savina',
+        conversationId: conversation.id,
+        authorId: 'savina-live',
+        sourceLang: 'en',
+        sourceText: 'btw ich schicke dir morgen eine App',
+        receipt: 'sent',
+      })
+    );
+
+    const ice = new InMemoryChatRepository(kv);
+    await ice.hydrateForUser('ice-live', [ICESTORM_PROFILE_ID]);
+    const inbox = await ice.listConversations('ice-live');
+    expect(inbox.map((item) => item.id)).toContain(conversation.id);
+    expect((await ice.listMessages(conversation.id)).map((item) => item.sourceText)).toEqual([
+      'btw ich schicke dir morgen eine App',
+    ]);
   });
 });

@@ -43,6 +43,18 @@ Set these in Netlify → Site configuration → Environment variables (build **a
 
 `OPENAI_API_KEY` must exist at **function runtime**. Build-only is not enough.
 
+### Secrets scanning (false positives)
+
+Netlify can mark env vars as **Contains secret values**, then fail the deploy if that **value** appears in the repo. That is not a leaked API key when the values are public config:
+
+- `EXPO_PUBLIC_AI_BACKEND` = `demo`
+- `EXPO_PUBLIC_OPENAI_MODEL` = `gpt-4o-mini`
+- `EXPO_PUBLIC_CHAT_COMPLETION_URL` = the public fourSome chat URL
+
+In **Project configuration → Environment variables**, edit those three and **turn off Contains secret values**. Keep it on for `OPENAI_API_KEY`, `EXPO_PUBLIC_OPENAI_API_KEY`, and Supabase keys.
+
+`netlify.toml` also sets `SECRETS_SCAN_OMIT_KEYS` for the same three. If a team-level secret scan still fails, add that variable in the Netlify UI as well (same comma-separated list).
+
 On-prem `localhost` URLs work with `expo start --web` on your machine. They do **not** work from Netlify’s cloud.
 
 ## Expo API routes on Netlify

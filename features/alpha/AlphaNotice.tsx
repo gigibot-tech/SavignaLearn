@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { tokens, type ThemeColors } from '@/constants/Colors';
+import { type ThemeColors } from '@/constants/Colors';
 import { ALPHA_NOTICE_A11Y, ALPHA_NOTICE_BODY, ALPHA_NOTICE_LABEL } from './alphaCopy';
 
 /**
@@ -34,11 +34,11 @@ export function AlphaNotice({
       <Ionicons
         name="warning"
         size={compact ? 18 : 22}
-        color={tokens.ember}
+        color={colors.accent}
         accessibilityElementsHidden
       />
       <View style={styles.textCol}>
-        <Text style={[styles.label, { color: tokens.ember }]}>{ALPHA_NOTICE_LABEL}</Text>
+        <Text style={[styles.label, { color: colors.accent }]}>{ALPHA_NOTICE_LABEL}</Text>
         <Text style={[styles.body, compact ? styles.bodyCompact : null, { color: colors.text }]}>
           {ALPHA_NOTICE_BODY}
         </Text>

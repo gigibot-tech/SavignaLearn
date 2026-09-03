@@ -4,8 +4,8 @@
   "description": "Bilingual learning chat with line-by-line and Birkenbihl modes",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#FFF1E6",
-  "theme_color": "#BD403F",
+  "background_color": "#FFF5F8",
+  "theme_color": "#C43B6F",
   "lang": "en",
   "icons": [
     {

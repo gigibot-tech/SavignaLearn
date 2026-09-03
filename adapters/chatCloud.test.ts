@@ -177,4 +177,97 @@ describe('PolicyChatRepository', () => {
     expect((await local.getConversation(conversationId))?.participants).toEqual(nextParticipants);
     expect((await cloud.getConversation(conversationId))?.participants).toEqual(nextParticipants);
   });
+
+  it('shares a human DM to cloud and merges duplicate timestamps', async () => {
+    const cloud = new InMemoryChatRepository();
+    const local = new InMemoryChatRepository();
+    const repo = new PolicyChatRepository(
+      { local, cloud },
+      new LocalFirstChatPolicy(new InMemoryChatRouteBook(), {
+        shareHumanDms: true,
+        inboxBackends: ['local', 'cloud'],
+      })
+    );
+    const conv = await repo.createConversation({
+      participantIds: ['learn', 'ice'],
+      participants: [
+        { userId: 'learn', nativeLang: 'en', learningLang: 'de' },
+        { userId: 'ice', nativeLang: 'de', learningLang: 'en' },
+      ],
+      aiEnabled: true,
+      title: 'Ice',
+    });
+    expect(conv.id).toBe('dm:ice:learn');
+    expect((await cloud.listConversations('learn')).map((item) => item.id)).toContain(conv.id);
+    expect((await local.listConversations('learn')).map((item) => item.id)).toContain(conv.id);
+
+    await repo.appendMessage(
+      sourceMessageFromText({
+        id: 'm-local',
+        conversationId: conv.id,
+        authorId: 'learn',
+        sourceLang: 'en',
+        sourceText: 'same line',
+        createdAt: '2026-09-03T12:00:00.000Z',
+        receipt: 'sent',
+      })
+    );
+    await cloud.appendMessage(
+      sourceMessageFromText({
+        id: 'm-cloud-copy',
+        conversationId: conv.id,
+        authorId: 'learn',
+        sourceLang: 'en',
+        sourceText: 'same line',
+        createdAt: '2026-09-03T12:00:00.800Z',
+        receipt: 'sent',
+      })
+    );
+    const timeline = await repo.listMessages(conv.id);
+    expect(timeline.filter((item) => item.sourceText === 'same line')).toHaveLength(1);
+    expect((await repo.listConversations('ice')).map((item) => item.id)).toContain(conv.id);
+  });
+
+  it('uploads an existing local human DM to cloud when the thread is opened', async () => {
+    const cloud = new InMemoryChatRepository();
+    const local = new InMemoryChatRepository();
+    const localOnly = new PolicyChatRepository(
+      { local, cloud },
+      new LocalFirstChatPolicy(new InMemoryChatRouteBook())
+    );
+    const conv = await localOnly.createConversation({
+      participantIds: ['learn', 'ice'],
+      participants: [
+        { userId: 'learn', nativeLang: 'en', learningLang: 'de' },
+        { userId: 'ice', nativeLang: 'de', learningLang: 'en' },
+      ],
+      aiEnabled: true,
+      title: 'Ice',
+    });
+    await localOnly.appendMessage(
+      sourceMessageFromText({
+        id: 'old-local',
+        conversationId: conv.id,
+        authorId: 'learn',
+        sourceLang: 'en',
+        sourceText: 'from this device',
+        createdAt: '2026-09-03T12:00:00.000Z',
+        receipt: 'sent',
+      })
+    );
+    expect(await cloud.listConversations('learn')).toEqual([]);
+
+    const shared = new PolicyChatRepository(
+      { local, cloud },
+      new LocalFirstChatPolicy(new InMemoryChatRouteBook(), {
+        shareHumanDms: true,
+        inboxBackends: ['local', 'cloud'],
+      })
+    );
+    const cloudId = await shared.ensureHumanDmCloud(conv.id);
+    expect(cloudId).toBe('dm:ice:learn');
+    expect((await cloud.listMessages(cloudId!)).map((item) => item.sourceText)).toEqual([
+      'from this device',
+    ]);
+  });
 });

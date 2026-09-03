@@ -3,8 +3,9 @@ import { StyleSheet, useWindowDimensions } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 import { useColorScheme } from '@/components/useColorScheme';
-import { Colors } from '@/constants/Colors';
-import { DESKTOP_BREAKPOINT } from '@/features/shell/AppShell';
+import { badgeLabel } from '@/domain/unread';
+import { DESKTOP_BREAKPOINT, useAppShell } from '@/features/shell/AppShell';
+import { useAppearance } from '@/features/shell/AppearanceProvider';
 
 function TabBarIcon(props: { name: React.ComponentProps<typeof FontAwesome>['name']; color: string }) {
   return <FontAwesome size={22} style={{ marginBottom: -2 }} {...props} />;
@@ -12,9 +13,11 @@ function TabBarIcon(props: { name: React.ComponentProps<typeof FontAwesome>['nam
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const colors = colorScheme === 'dark' ? Colors.dark : Colors.light;
+  const { pack } = useAppearance();
+  const colors = colorScheme === 'dark' ? pack.dark : pack.light;
   const { width } = useWindowDimensions();
   const desktop = width >= DESKTOP_BREAKPOINT;
+  const { unread, incoming } = useAppShell();
 
   return (
     <Tabs
@@ -35,6 +38,7 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Chats',
+          tabBarBadge: badgeLabel(unread),
           tabBarIcon: ({ color }) => <TabBarIcon name="comments" color={String(color)} />,
         }}
       />
@@ -42,6 +46,7 @@ export default function TabLayout() {
         name="friends"
         options={{
           title: 'Friends',
+          tabBarBadge: badgeLabel(incoming),
           tabBarIcon: ({ color }) => <TabBarIcon name="users" color={String(color)} />,
         }}
       />

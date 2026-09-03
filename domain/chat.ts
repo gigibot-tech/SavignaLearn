@@ -81,6 +81,9 @@ export type MessageMediaKind = 'image' | 'sticker';
 
 export const STICKER_URI_PREFIX = 'sticker:';
 
+/** WhatsApp-style placeholder after delete-for-everyone. */
+export const DELETED_FOR_EVERYONE_COPY = 'This message was deleted';
+
 export function stickerUri(id: string): string {
   return `${STICKER_URI_PREFIX}${id}`;
 }
@@ -222,15 +225,17 @@ export function isMediaMessage(
 
 /** Stickers and photos skip detect / translate / Birkenbihl. */
 export function shouldTranslateMessage(
-  message: Pick<SourceMessage, 'sourceText' | 'lines' | 'contentKind' | 'sticker' | 'mediaKind'>
+  message: Pick<SourceMessage, 'sourceText' | 'lines' | 'contentKind' | 'sticker' | 'mediaKind' | 'deletedAt'>
 ): boolean {
+  if (message.deletedAt) return false;
   if (isMediaMessage(message)) return false;
   return message.sourceText.trim().length > 0;
 }
 
 export function conversationPreviewFor(
-  message: Pick<SourceMessage, 'sourceText' | 'lines' | 'contentKind' | 'sticker' | 'mediaKind'>
+  message: Pick<SourceMessage, 'sourceText' | 'lines' | 'contentKind' | 'sticker' | 'mediaKind' | 'deletedAt'>
 ): string {
+  if (message.deletedAt) return DELETED_FOR_EVERYONE_COPY;
   if (mediaKindOf(message) === 'sticker') return 'Sticker';
   if (isMediaMessage(message) && !message.sourceText.trim()) return 'Photo';
   return message.sourceText.split('\n')[0] ?? '';
@@ -284,6 +289,137 @@ export function collapseDuplicateLearningBots(conversations: Conversation[]): Co
   const keeper = pickLearningBotConversation(conversations);
   if (!keeper) return conversations;
   return conversations.filter((item) => item.id === keeper.id || !isLearningBotConversation(item));
+}
+
+export function isHumanDirectChat(participantIds: string[]): boolean {
+  if (participantIds.includes(LEARNING_BOT_USER_ID)) return false;
+  return new Set(participantIds.filter(Boolean)).size === 2;
+}
+
+export function humanDirectPairKey(
+  participantIds: string[],
+  canonicalize: (id: string) => string = (id) => id
+): string | null {
+  const humans = [
+    ...new Set(
+      participantIds.filter((id) => id && id !== LEARNING_BOT_USER_ID).map((id) => canonicalize(id))
+    ),
+  ].sort();
+  if (humans.length !== 2) return null;
+  return `${humans[0]}:${humans[1]}`;
+}
+
+/** Shared id both participants use for one DM (`dm:<sortedUuid>:<sortedUuid>`). */
+export function directConversationId(left: string, right: string): string {
+  const [a, b] = [left, right].sort();
+  return `dm:${a}:${b}`;
+}
+
+export function pickDirectConversation(group: Conversation[]): Conversation {
+  const ranked = [...group].sort((a, b) => {
+    const aCanon = a.id.startsWith('dm:') ? 1 : 0;
+    const bCanon = b.id.startsWith('dm:') ? 1 : 0;
+    if (aCanon !== bCanon) return bCanon - aCanon;
+    return b.updatedAt.localeCompare(a.updatedAt);
+  });
+  const keeper = ranked[0];
+  const newest = [...group].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  return {
+    ...keeper,
+    updatedAt: newest.updatedAt,
+    lastMessagePreview: newest.lastMessagePreview ?? keeper.lastMessagePreview,
+    unreadCount: Math.max(...group.map((item) => item.unreadCount)),
+  };
+}
+
+export function collapseDuplicateDirectChats(
+  conversations: Conversation[],
+  canonicalize: (id: string) => string = (id) => id
+): Conversation[] {
+  const groups = new Map<string, Conversation[]>();
+  const rest: Conversation[] = [];
+  for (const conversation of conversations) {
+    if (isLearningBotConversation(conversation)) {
+      rest.push(conversation);
+      continue;
+    }
+    const key = humanDirectPairKey(conversation.participantIds, canonicalize);
+    if (!key) {
+      rest.push(conversation);
+      continue;
+    }
+    const list = groups.get(key) ?? [];
+    list.push(conversation);
+    groups.set(key, list);
+  }
+  return [...rest, ...[...groups.values()].map(pickDirectConversation)];
+}
+
+const RECEIPT_RANK: Record<ReceiptStatus, number> = {
+  failed: 0,
+  pending: 1,
+  sent: 2,
+  delivered: 3,
+  read: 4,
+};
+
+export function pickRicherMessage(left: SourceMessage, right: SourceMessage): SourceMessage {
+  const deletedAt = left.deletedAt ?? right.deletedAt;
+  const receipt =
+    RECEIPT_RANK[right.receipt] > RECEIPT_RANK[left.receipt] ? right.receipt : left.receipt;
+  const lines = right.lines.length >= left.lines.length ? right.lines : left.lines;
+  const older = left.createdAt <= right.createdAt ? left : right;
+  const newer = older === left ? right : left;
+  const merged: SourceMessage = {
+    ...newer,
+    id: older.id,
+    receipt,
+    lines,
+    sourceText: newer.sourceText || left.sourceText || right.sourceText,
+    editedAt: right.editedAt ?? left.editedAt,
+    deletedAt,
+  };
+  if (deletedAt) {
+    return {
+      ...merged,
+      deletedAt,
+      sourceText: '',
+      lines: [{ content: '' }],
+      contentKind: 'text',
+      mediaKind: undefined,
+      sticker: undefined,
+    };
+  }
+  return merged;
+}
+
+export function isNearDuplicateMessage(left: SourceMessage, right: SourceMessage): boolean {
+  if (left.id === right.id) return true;
+  if (left.authorId !== right.authorId || left.kind !== right.kind) return false;
+  if (left.sourceText !== right.sourceText) return false;
+  const delta = Math.abs(Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  return Number.isFinite(delta) && delta <= 2000;
+}
+
+/** One timeline: same id or same author+text within 2s collapses; order is createdAt. */
+export function mergeMessageTimelines(...lists: SourceMessage[][]): SourceMessage[] {
+  const byId = new Map<string, SourceMessage>();
+  for (const list of lists) {
+    for (const message of list) {
+      const previous = byId.get(message.id);
+      byId.set(message.id, previous ? pickRicherMessage(previous, message) : message);
+    }
+  }
+  const sorted = [...byId.values()].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+  );
+  const merged: SourceMessage[] = [];
+  for (const message of sorted) {
+    const index = merged.findIndex((item) => isNearDuplicateMessage(item, message));
+    if (index >= 0) merged[index] = pickRicherMessage(merged[index], message);
+    else merged.push(message);
+  }
+  return merged;
 }
 
 export function otherParticipantId(

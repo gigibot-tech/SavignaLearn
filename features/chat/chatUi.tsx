@@ -23,6 +23,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
+  DELETED_FOR_EVERYONE_COPY,
+  badgeLabel,
   hasInterlinearFormat,
   joinOriginalsFromSelection,
   LEARNING_BOT_DISPLAY_NAME,
@@ -35,8 +37,9 @@ import type { LearningSource } from '@/domain/learning';
 import type { TokenizerPort, WordTapPort } from '@/ports/ports';
 import { AI_BACKENDS, type AiBackendId } from '@/adapters/chat';
 import { isBackendSelectable, type AiHealthReport } from '@/adapters/aiHealth';
-import { Colors, gradients, tokens, type ThemeColors } from '@/constants/Colors';
+import { type ThemeColors } from '@/constants/Colors';
 import { shouldKeepLoggedIn } from '@/adapters/authStorage';
+import { useAppearance } from '@/features/shell/AppearanceProvider';
 import {
   ChatMediaImage,
   ComposerMediaButtons,
@@ -47,11 +50,12 @@ import type { MessageMediaKind } from '@/domain/chat';
 import { TappableSentence, useWebClipboardJoin } from './TappableSentence';
 
 export function useThemeColors(scheme: 'light' | 'dark' | null | undefined): ThemeColors {
-  return scheme === 'dark' ? Colors.dark : Colors.light;
+  const { pack } = useAppearance();
+  return scheme === 'dark' ? pack.dark : pack.light;
 }
 
 /**
- * Full-bleed screen wash (Gigolingo GradientBackground + fourSome ember stops).
+ * Full-bleed screen wash (Gigolingo GradientBackground + active appearance stops).
  */
 export function GradientBackground({
   children,
@@ -62,8 +66,8 @@ export function GradientBackground({
   scheme?: 'light' | 'dark' | null;
   style?: StyleProp<ViewStyle>;
 }) {
-  const dark = scheme === 'dark';
-  const colors = dark ? gradients.dark : gradients.light;
+  const { pack } = useAppearance();
+  const colors = scheme === 'dark' ? pack.gradients.dark : pack.gradients.light;
   return (
     <LinearGradient
       colors={[...colors]}
@@ -129,6 +133,7 @@ export function GradientCta({
   onPress: () => void;
   accessibilityLabel?: string;
 }) {
+  const { pack } = useAppearance();
   return (
     <Pressable
       onPress={onPress}
@@ -137,7 +142,7 @@ export function GradientCta({
       style={shell.ctaWrap}
     >
       <LinearGradient
-        colors={[...gradients.cta]}
+        colors={[...pack.gradients.cta]}
         start={{ x: 0, y: 0.5 }}
         end={{ x: 1, y: 0.5 }}
         style={shell.cta}
@@ -201,6 +206,9 @@ export function ThreadChromeHeader({
   colors,
   scheme,
   isBot,
+  leadingIcon = 'chevron-back',
+  leadingLabel = 'Back',
+  onOpenProfile,
 }: {
   title: string;
   subtitle?: string;
@@ -211,8 +219,13 @@ export function ThreadChromeHeader({
   colors: ThemeColors;
   scheme?: 'light' | 'dark' | null;
   isBot?: boolean;
+  /** Desktop collapsed sidebar: use menu to expand chats/friends. */
+  leadingIcon?: React.ComponentProps<typeof Ionicons>['name'];
+  leadingLabel?: string;
+  onOpenProfile?: () => void;
 }) {
-  const wash = scheme === 'dark' ? gradients.headerDark : gradients.headerLight;
+  const { pack } = useAppearance();
+  const wash = scheme === 'dark' ? pack.gradients.headerDark : pack.gradients.headerLight;
   return (
     <LinearGradient colors={[...wash]} style={shell.threadHeaderWash}>
       <View
@@ -226,34 +239,42 @@ export function ThreadChromeHeader({
       >
         <Pressable
           onPress={onBack}
-          accessibilityLabel="Back"
+          accessibilityLabel={leadingLabel}
           hitSlop={12}
           style={shell.backHit}
         >
-          <Ionicons name="chevron-back" size={24} color={colors.accent} />
+          <Ionicons name={leadingIcon} size={24} color={colors.accent} />
         </Pressable>
-        {isBot ? (
-          <SavignasBoiAvatar size={32} style={shell.headerAvatar} />
-        ) : (
-          <LinearGradient colors={[...gradients.ctaSoft]} style={shell.headerAvatar}>
-            <Ionicons name="person" size={16} color={tokens.wine} />
-          </LinearGradient>
-        )}
-        <View style={shell.headerTitles}>
-          <Text style={[shell.threadTitle, { color: colors.text }]} numberOfLines={1}>
-            {title}
-          </Text>
-          {subtitle ? (
-            <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>
-              {subtitle}
+        <Pressable
+          onPress={onOpenProfile}
+          disabled={!onOpenProfile}
+          accessibilityRole={onOpenProfile ? 'button' : undefined}
+          accessibilityLabel={onOpenProfile ? `Open ${title} profile` : undefined}
+          style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}
+        >
+          {isBot ? (
+            <SavignasBoiAvatar size={32} style={shell.headerAvatar} />
+          ) : (
+            <LinearGradient colors={[...pack.gradients.ctaSoft]} style={shell.headerAvatar}>
+              <Ionicons name="person" size={16} color={colors.onSoft} />
+            </LinearGradient>
+          )}
+          <View style={shell.headerTitles}>
+            <Text style={[shell.threadTitle, { color: colors.text }]} numberOfLines={1}>
+              {title}
             </Text>
-          ) : null}
-          {pipelineLabel ? (
-            <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '600' }} numberOfLines={1}>
-              {pipelineLabel}
-            </Text>
-          ) : null}
-        </View>
+            {subtitle ? (
+              <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '600' }} numberOfLines={1}>
+                {subtitle}
+              </Text>
+            ) : null}
+            {pipelineLabel ? (
+              <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '600' }} numberOfLines={1}>
+                {pipelineLabel}
+              </Text>
+            ) : null}
+          </View>
+        </Pressable>
         {onOpenSettings ? (
           <Pressable
             onPress={onOpenSettings}
@@ -385,7 +406,7 @@ export function MessageLines({
                 onTokenPress={(token) =>
                   void wordTap.onPress({
                     token,
-                    sentence: line.sourceText,
+                    sentence: original,
                     language,
                     source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
                   })
@@ -401,7 +422,7 @@ export function MessageLines({
             </View>
           );
         }
-        const parts = tokenizer.tokenize(line.learningText, language);
+        const parts = tokenizer.tokenize(line.learningText, line.learningLangTag);
         const showNative =
           line.nativeText.trim().length > 0 &&
           line.nativeText.trim() !== line.learningText.trim();
@@ -418,8 +439,8 @@ export function MessageLines({
               onTokenPress={(token) =>
                 void wordTap.onPress({
                   token,
-                  sentence: line.sourceText,
-                  language,
+                  sentence: line.learningText,
+                  language: line.learningLangTag,
                   source: { ...source, kind: 'chat', lineIndex: line.lineIndex },
                 })
               }
@@ -468,6 +489,8 @@ export function MessageBubble({
   onRetryTranslation,
   translationRetryReason,
   translationRetryBusy,
+  deleted,
+  onRequestDelete,
 }: {
   mine: boolean;
   kind: 'user' | 'ai' | 'system';
@@ -492,7 +515,10 @@ export function MessageBubble({
   onRetryTranslation?: () => void;
   translationRetryReason?: TranslationMismatchReason | null;
   translationRetryBusy?: boolean;
+  deleted?: boolean;
+  onRequestDelete?: () => void;
 }) {
+  const { pack } = useAppearance();
   if (kind === 'system') {
     return (
       <Text style={[styles.systemText, { color: colors.textMuted }]} accessibilityRole="text">
@@ -586,7 +612,11 @@ export function MessageBubble({
         </Text>
       </Pressable>
     ) : null;
-  const inner = (
+  const tombstoneColor =
+    mine && kind === 'user' && !failed ? 'rgba(255,255,255,0.88)' : colors.textMuted;
+  const inner = deleted ? (
+    <Text style={[styles.tombstoneText, { color: tombstoneColor }]}>{DELETED_FOR_EVERYONE_COPY}</Text>
+  ) : (
     <>
       {mediaBlock}
       {body}
@@ -594,44 +624,68 @@ export function MessageBubble({
       {birkenRetry}
     </>
   );
+  const gestureProps = onRequestDelete
+    ? {
+        delayLongPress: 380,
+        onLongPress: onRequestDelete,
+        ...(Platform.OS === 'web'
+          ? {
+              onContextMenu: (event: { preventDefault(): void }) => {
+                event.preventDefault();
+                onRequestDelete();
+              },
+            }
+          : {}),
+      }
+    : {};
 
   if (mine && kind === 'user') {
     return (
-      <View style={[styles.bubbleOuter, { alignSelf }]}>
+      <Pressable
+        style={[styles.bubbleOuter, { alignSelf }]}
+        accessibilityRole="button"
+        accessibilityLabel={deleted ? 'Deleted message actions' : 'Message actions'}
+        accessibilityHint="Long press to delete"
+        {...gestureProps}
+      >
         <LinearGradient
-          colors={failed ? [tokens.wine, '#3A1010'] : [...gradients.bubbleOut]}
+          colors={failed ? [pack.tokens.wine, pack.tokens.failedDeep] : [...pack.gradients.bubbleOut]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={[styles.bubble, styles.bubbleMine, failed && styles.bubbleFailed]}
         >
           {inner}
-          {receipt && !failed ? (
+          {receipt && !failed && !deleted ? (
             <Text style={[styles.receipt, { color: 'rgba(255,255,255,0.85)' }]} accessibilityLabel={receipt}>
               {receiptGlyph(receipt)}
             </Text>
           ) : null}
-          {failed ? (
+          {failed && !deleted ? (
             <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry send">
               <Text style={styles.failCopy}>{errorCopy ?? "Couldn't send. Tap to retry."}</Text>
             </Pressable>
           ) : null}
         </LinearGradient>
-      </View>
+      </Pressable>
     );
   }
 
   const bg = kind === 'ai' ? colors.bubbleAi : colors.bubbleIncoming;
   return (
-    <View
+    <Pressable
       style={[
         styles.bubble,
         styles.bubbleOther,
         { backgroundColor: bg, alignSelf, borderColor: colors.border },
       ]}
-      accessibilityRole="text"
-      accessibilityLabel={kind === 'ai' ? 'AI message' : 'Partner message'}
+      accessibilityRole="button"
+      accessibilityLabel={
+        deleted ? 'Deleted message actions' : kind === 'ai' ? 'AI message actions' : 'Partner message actions'
+      }
+      accessibilityHint="Long press to delete"
+      {...gestureProps}
     >
-      {kind === 'ai' ? (
+      {kind === 'ai' && !deleted ? (
         <View style={styles.aiHeader}>
           <SavignasBoiAvatar size={22} />
           <Text style={[styles.aiLabel, { color: colors.accent }]}>{LEARNING_BOT_DISPLAY_NAME}</Text>
@@ -639,14 +693,14 @@ export function MessageBubble({
         </View>
       ) : null}
       {inner}
-      {failed ? (
+      {failed && !deleted ? (
         <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry send">
           <Text style={{ color: colors.danger, marginTop: 6, fontWeight: '600' }}>
             {errorCopy ?? 'Retry'}
           </Text>
         </Pressable>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -761,6 +815,7 @@ export function Composer({
   nativeLang: string;
   learningLang?: string;
 }) {
+  const { pack } = useAppearance();
   const [text, setText] = useState('');
   const [trayOpen, setTrayOpen] = useState(false);
   const draft = useRef('');
@@ -791,7 +846,7 @@ export function Composer({
     ? `Message in ${languageLabel(nativeLang)} (learning ${languageLabel(learningLang)})…`
     : `Message in ${languageLabel(nativeLang)}…`;
   const sendControl = (
-    <LinearGradient colors={[...gradients.cta]} style={[styles.sendBtn, { pointerEvents: 'none' }]}>
+    <LinearGradient colors={[...pack.gradients.cta]} style={[styles.sendBtn, { pointerEvents: 'none' }]}>
       <Ionicons name="send" size={18} color="#fff" />
     </LinearGradient>
   );
@@ -883,7 +938,7 @@ export function Composer({
               border: 'none',
               borderRadius: 22,
               cursor: 'pointer',
-              background: `linear-gradient(90deg, ${tokens.coral}, ${tokens.ember})`,
+              background: `linear-gradient(90deg, ${pack.tokens.coral}, ${pack.tokens.ember})`,
               color: '#fff',
               display: 'flex',
               alignItems: 'center',
@@ -1121,6 +1176,7 @@ export type ThreadChatSettingsProps = {
   onLearningLangChange: (code: string) => void;
   onPartnerLearningLangChange: (code: string) => void;
   isBotChat: boolean;
+  storedInCloud?: boolean;
   aiBackend: AiBackendId;
   onAiBackendChange: (id: AiBackendId) => void;
   health: AiHealthReport | null;
@@ -1142,6 +1198,7 @@ export function ThreadInlineChatSettings({
   onLearningLangChange,
   onPartnerLearningLangChange,
   isBotChat,
+  storedInCloud = false,
   aiBackend,
   onAiBackendChange,
   health,
@@ -1158,9 +1215,17 @@ export function ThreadInlineChatSettings({
   return (
     <View
       style={[inlineStyles.bar, { backgroundColor: colors.headerGlass, borderBottomColor: colors.border }]}
-      accessibilityLabel="This chat: connection and languages"
+      accessibilityLabel={
+        isBotChat
+          ? 'This chat: this device only'
+          : storedInCloud
+            ? 'This chat: saved in the cloud'
+            : 'This chat: connection and languages'
+      }
     >
-      <Text style={[inlineStyles.kicker, { color: colors.textMuted }]}>This chat</Text>
+      <Text style={[inlineStyles.kicker, { color: colors.textMuted }]}>
+        This chat{isBotChat ? ' · This device' : storedInCloud ? ' · Cloud' : ''}
+      </Text>
       <View style={inlineStyles.row}>
         {AI_BACKENDS.map((item) => {
           const probe = healthCheck(health, item.id);
@@ -1352,6 +1417,7 @@ export function ChatSettingsSheet({
   onPartnerLearningLangChange,
   pipelineLabel,
   isBotChat,
+  storedInCloud = false,
   aiBackend,
   onAiBackendChange,
   health,
@@ -1375,6 +1441,7 @@ export function ChatSettingsSheet({
   onPartnerLearningLangChange: (code: string) => void;
   pipelineLabel: string;
   isBotChat: boolean;
+  storedInCloud?: boolean;
   aiBackend: AiBackendId;
   onAiBackendChange: (id: AiBackendId) => void;
   health: AiHealthReport | null;
@@ -1395,7 +1462,11 @@ export function ChatSettingsSheet({
           <Text style={[pickerStyles.sheetTitle, { color: colors.text }]}>Chat settings</Text>
           <ScrollView style={{ maxHeight: 480 }} keyboardShouldPersistTaps="handled">
           <Text style={{ color: colors.textMuted, paddingHorizontal: 16, marginBottom: 12, fontSize: 13 }}>
-            {pipelineLabel}
+            {isBotChat
+              ? `${pipelineLabel} · Bot stays on this device`
+              : storedInCloud
+                ? `${pipelineLabel} · Saved in the cloud`
+                : pipelineLabel}
           </Text>
 
           <View style={{ paddingHorizontal: 16 }}>
@@ -1599,6 +1670,7 @@ export function InboxRow({
   colors: ThemeColors;
   onPress: () => void;
 }) {
+  const { pack } = useAppearance();
   const titleStyle = useMemo(
     () =>
       [
@@ -1619,8 +1691,8 @@ export function InboxRow({
         {isBot ? (
           <SavignasBoiAvatar size={46} />
         ) : (
-          <LinearGradient colors={[...gradients.ctaSoft]} style={styles.avatar}>
-            <Text style={{ color: tokens.wine, fontWeight: '800' }}>{title.slice(0, 1)}</Text>
+          <LinearGradient colors={[...pack.gradients.ctaSoft]} style={styles.avatar}>
+            <Text style={{ color: colors.onSoft, fontWeight: '800' }}>{title.slice(0, 1)}</Text>
           </LinearGradient>
         )}
         <View
@@ -1648,7 +1720,7 @@ export function InboxRow({
           {muted ? <Ionicons name="notifications-off" size={14} color={colors.textMuted} /> : null}
           {unread > 0 ? (
             <View style={[styles.badge, { backgroundColor: colors.unread }]}>
-              <Text style={styles.badgeText}>{unread}</Text>
+              <Text style={styles.badgeText}>{badgeLabel(unread)}</Text>
             </View>
           ) : null}
         </View>
@@ -1689,6 +1761,7 @@ export function announceMessage(input: {
 export function ChatsEmptyHome({
   colors,
   username,
+  identityKind = 'username',
   onCopyUsername,
   onShareInvite,
   onOpenBot,
@@ -1699,6 +1772,7 @@ export function ChatsEmptyHome({
 }: {
   colors: ThemeColors;
   username: string;
+  identityKind?: 'username' | 'email';
   onCopyUsername: () => void;
   onShareInvite: () => void;
   onOpenBot: () => void;
@@ -1738,22 +1812,26 @@ export function ChatsEmptyHome({
           Start your first conversation
         </Text>
         <Text style={[emptyStyles.subhead, { color: colors.textMuted }]}>
-          Invite a partner with your username — chat in your languages, line by line.
+          {identityKind === 'email'
+            ? 'That username is shared — invite with your email, or chat in your languages line by line.'
+            : 'Invite a partner with your username — chat in your languages, line by line.'}
         </Text>
 
-        <Text style={[emptyStyles.label, { color: colors.textMuted }]}>Username</Text>
+        <Text style={[emptyStyles.label, { color: colors.textMuted }]}>
+          {identityKind === 'email' ? 'Email' : 'Username'}
+        </Text>
         <GlassPanel colors={colors} style={emptyStyles.usernameCard}>
           <Pressable
             onPress={onCopyUsername}
             accessibilityRole="button"
-            accessibilityLabel={`Username ${username}. Tap to copy`}
+            accessibilityLabel={`${identityKind === 'email' ? 'Email' : 'Username'} ${username}. Tap to copy`}
             style={emptyStyles.usernamePress}
           >
             <Text style={[emptyStyles.username, { color: colors.text }]} numberOfLines={1}>
               {username}
             </Text>
             <View style={[emptyStyles.copyPill, { backgroundColor: colors.accentSoft }]}>
-              <Text style={[emptyStyles.copyPillText, { color: tokens.ember }]}>
+              <Text style={[emptyStyles.copyPillText, { color: colors.accent }]}>
                 {copied ? 'Copied' : 'Tap to copy'}
               </Text>
             </View>
@@ -2066,6 +2144,7 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
   bubbleMine: { maxWidth: '100%', borderBottomRightRadius: 6 },
+  tombstoneText: { fontSize: 14, fontStyle: 'italic', fontWeight: '600' },
   bubbleFailed: { borderWidth: 1, borderColor: 'rgba(255,220,200,0.45)' },
   failCopy: { color: '#FFE8E0', marginTop: 8, fontWeight: '700', fontSize: 13 },
   bubbleOther: {

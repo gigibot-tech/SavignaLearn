@@ -30,6 +30,7 @@ export {
   isMediaMessage,
   shouldTranslateMessage,
   conversationPreviewFor,
+  DELETED_FOR_EVERYONE_COPY,
   STICKER_URI_PREFIX,
   otherParticipantId,
   viewpointLangsFor,
@@ -45,7 +46,51 @@ export {
   isLearningBotConversation,
   pickLearningBotConversation,
   collapseDuplicateLearningBots,
+  isHumanDirectChat,
+  humanDirectPairKey,
+  directConversationId,
+  collapseDuplicateDirectChats,
+  mergeMessageTimelines,
 } from './chat';
+
+export {
+  badgeLabel,
+  shouldCountAsUnread,
+  unreadRecipients,
+  unreadTotal,
+} from './unread';
+export type { ConversationProfileStats } from './profileStats';
+export { conversationProfileStats } from './profileStats';
+
+export type { MessageDeleteScope } from './messageDelete';
+export {
+  DELETE_FOR_EVERYONE_WINDOW_MS,
+  canDeleteForEveryone,
+  canDeleteForMe,
+  isDeletedForEveryone,
+  messagesVisibleToViewer,
+  previewAfterDelete,
+  tombstoneMessage,
+  viewerOwnsMessage,
+} from './messageDelete';
+
+export type {
+  WhatsAppSpeaker,
+  ParsedWhatsAppMessage,
+  WhatsAppParseResult,
+  SpeakerIdentityHints,
+  SpeakerGuess,
+  PartnerCandidate,
+} from './whatsappImport';
+export {
+  foldWhatsAppName,
+  whatsappNameSimilarity,
+  parseWhatsAppTranscript,
+  guessSelfSpeaker,
+  guessPartner,
+  messagesForSpeakers,
+  localWhatsAppPartnerId,
+} from './whatsappImport';
 
 export type {
   LearningSource,
@@ -102,6 +147,14 @@ export {
   friendInconsistency,
   friendInconsistencyMessage,
   profileEmail,
+  usernameFromEmail,
+  uniqueProfilesByPerson,
+  profilesMatchingUsername,
+  ambiguousUsernames,
+  friendIdentitySubtitle,
+  inboxPartnerTitle,
+  publicIdentityLabel,
+  publicIdentityCopyValue,
   isDeletedPair,
   parseFriendIdentifier,
   parseFriendShareInput,
@@ -139,6 +192,7 @@ export {
   splitTranslationIntoLines,
   mergeTranslationsByMode,
   mergeLineTranslations,
+  dropIdentityLineTranslations,
   mergeTranslationMaps,
   hasBirkenbihlTranslation,
 } from './pipeline';

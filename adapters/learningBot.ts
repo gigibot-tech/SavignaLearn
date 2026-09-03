@@ -4,6 +4,7 @@
  */
 
 import {
+  collapseDuplicateDirectChats,
   collapseDuplicateLearningBots,
   isLearningBotConversation,
   LEARNING_BOT_DISPLAY_NAME,
@@ -11,12 +12,13 @@ import {
   pickLearningBotConversation,
   type Conversation,
 } from '@/domain/chat';
+import { canonicalChatActorId } from '@/domain/friends';
 import type { ChatRepository } from '@/ports/ports';
 
 type MemoryChat = ChatRepository & {
   seedDemo: (viewerId: string, partnerId: string) => void;
   conversations: Conversation[];
-  hydrateForUser?: (userId: string) => Promise<void>;
+  hydrateForUser?: (userId: string, aliases?: string[]) => Promise<void>;
   persistUser?: (userId: string) => Promise<void>;
 };
 
@@ -47,9 +49,10 @@ export async function listInboxConversations(
       byId.set(conversation.id, conversation);
     }
   }
-  return collapseDuplicateLearningBots([...byId.values()]).sort((a, b) =>
-    b.updatedAt.localeCompare(a.updatedAt)
-  );
+  return collapseDuplicateDirectChats(
+    collapseDuplicateLearningBots([...byId.values()]),
+    canonicalChatActorId
+  ).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 /** Ensure this signed-in user has one Bot thread — never steal another viewer's. */

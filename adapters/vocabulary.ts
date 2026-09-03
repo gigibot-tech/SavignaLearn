@@ -11,9 +11,13 @@ import {
   type LearningItem,
   type LearningSource,
 } from '@/domain/learning';
-import { extractJsonObject, toGigolingoLangKey, type LanguageCode } from '@/domain';
+import { extractJsonObject, normalizeLanguageCode, toGigolingoLangKey, type LanguageCode } from '@/domain';
 import { getVocabularyCardPrompt } from '@/gigolingo-shared/vocabularyPrompts';
-import { needsReadingAttribute } from '@/gigolingo-shared/languages';
+import {
+  inferVocabLanguageFromWord,
+  needsReadingAttribute,
+  sentenceMatchesReadingLanguage,
+} from '@/gigolingo-shared/languages';
 import type {
   ChatCompletionPort,
   LearningItemRepository,
@@ -38,6 +42,41 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+export function resolveVocabCardLanguage(word: string, language?: string): LanguageCode {
+  return normalizeLanguageCode(inferVocabLanguageFromWord(word, language));
+}
+
+function applyReadingLikeGigolingo<T extends { word: string; reading?: string; sentenceReading?: string }>(
+  item: T,
+  language: LanguageCode | undefined,
+  sentence: string
+): T {
+  const gigolingoLang = language ? toGigolingoLangKey(language) : 'EN';
+  if (!needsReadingAttribute(gigolingoLang)) {
+    return { ...item, reading: '', sentenceReading: undefined };
+  }
+  const reading = item.reading?.trim() ? item.reading.trim() : item.word;
+  const sentenceReading =
+    sentenceMatchesReadingLanguage(sentence, gigolingoLang) && item.sentenceReading?.trim()
+      ? item.sentenceReading.trim()
+      : undefined;
+  return { ...item, reading, sentenceReading };
+}
+
+function vocabularyCardPromptFor(word: string, sentence: string, language: LanguageCode) {
+  const gigolingoLang = toGigolingoLangKey(language);
+  const prompt = getVocabularyCardPrompt(word, sentence, gigolingoLang, 'EN');
+  if (gigolingoLang === 'JA' && !sentenceMatchesReadingLanguage(sentence, gigolingoLang)) {
+    return {
+      ...prompt,
+      userPrompt: `${prompt.userPrompt}
+
+NOTE: The sentence context may not be Japanese. Still provide hiragana/katakana reading for the word. Leave sentenceReading empty if the sentence is not Japanese.`,
+    };
+  }
+  return prompt;
+}
+
 /**
  * Gigolingo OpenAIService.parseVocabularyCardResponse, using SavignaLearn `extractJsonObject`.
  */
@@ -51,27 +90,22 @@ export function parseGeneratedVocabularyCard(
   const translation = asString(parsed.translation);
   if (!word || !translation) return null;
 
-  const language = fallback.language;
-  const gigolingoLang = language ? toGigolingoLangKey(language) : 'EN';
-  const reading = asString(parsed.reading) ?? '';
-  const sentenceReading = asString(parsed.sentenceReading);
+  const language = resolveVocabCardLanguage(word, fallback.language);
+  const sentenceOrig = asString(parsed.sentenceOrig) ?? fallback.sentence;
   const item = createLearningItem({
     word,
     translation,
-    sentenceOrig: asString(parsed.sentenceOrig) ?? fallback.sentence,
+    sentenceOrig,
     sentenceEng: asString(parsed.sentenceEng) ?? fallback.sentence,
-    sentenceReading,
-    reading,
+    sentenceReading: asString(parsed.sentenceReading),
+    reading: asString(parsed.reading) ?? '',
     languageLevel: asString(parsed.languageLevel),
     frequency: asString(parsed.frequency),
     jlpt: asString(parsed.jlpt),
     language,
     source: { kind: 'manual' },
   });
-  if (!needsReadingAttribute(gigolingoLang)) {
-    return { ...item, reading: '', sentenceReading: undefined };
-  }
-  return item;
+  return applyReadingLikeGigolingo(item, language, sentenceOrig);
 }
 
 export class FakeVocabularyCardAdapter implements VocabularyCardPort {
@@ -84,14 +118,17 @@ export class FakeVocabularyCardAdapter implements VocabularyCardPort {
     sentence: string,
     language?: string
   ): Promise<LearningItem | null> {
+    const resolved = resolveVocabCardLanguage(word, language);
+    const needsReading = needsReadingAttribute(toGigolingoLangKey(resolved));
     return createLearningItem({
       word,
       translation: word,
       sentenceOrig: sentence,
       sentenceEng: sentence,
-      language,
+      language: resolved,
       languageLevel: 'A2',
       frequency: 'medium',
+      reading: needsReading ? word : '',
       source: { kind: 'manual' },
     });
   }
@@ -112,8 +149,8 @@ export class ChatCompletionVocabularyCardAdapter implements VocabularyCardPort {
     sentence: string,
     language?: LanguageCode
   ): Promise<LearningItem | null> {
-    const gigolingoLang = toGigolingoLangKey(language ?? 'de');
-    const prompt = getVocabularyCardPrompt(word, sentence, gigolingoLang, 'EN');
+    const resolved = resolveVocabCardLanguage(word, language);
+    const prompt = vocabularyCardPromptFor(word, sentence, resolved);
     try {
       const raw = await this.completion.complete(
         [
@@ -122,19 +159,19 @@ export class ChatCompletionVocabularyCardAdapter implements VocabularyCardPort {
         ],
         { json: true, feature: 'savigna-vocab' }
       );
-      const parsed = parseGeneratedVocabularyCard(raw, { word, sentence, language });
+      const parsed = parseGeneratedVocabularyCard(raw, { word, sentence, language: resolved });
       if (parsed) {
         return createLearningItem({
           ...parsed,
           word,
-          language,
+          language: resolved,
           source: parsed.source ?? { kind: 'manual' },
         });
       }
     } catch {
       // fall through to fake card so tap never fails the thread
     }
-    return this.fallback.generateVocabularyCard(word, sentence, language);
+    return this.fallback.generateVocabularyCard(word, sentence, resolved);
   }
 }
 
@@ -244,12 +281,8 @@ export async function openOrCreateVocabularyCard(
 ): Promise<OpenVocabularyCardResult> {
   const word = input.word.trim();
   if (!word) throw new Error('LearningItem.word must not be empty');
-  const existing = await deps.items.findByIdentity(
-    input.userId,
-    word,
-    input.language,
-    input.source
-  );
+  const language = resolveVocabCardLanguage(word, input.language);
+  const existing = await deps.items.findByIdentity(input.userId, word, language, input.source);
   if (existing?.id) {
     const refetched = (await deps.items.findById(existing.id)) ?? existing;
     return { item: refetched, created: false };
@@ -257,22 +290,24 @@ export async function openOrCreateVocabularyCard(
   if (existing) {
     return { item: existing, created: false };
   }
-  const generated = await deps.cards.generateVocabularyCard(word, input.sentence, input.language);
+  const generated = await deps.cards.generateVocabularyCard(word, input.sentence, language);
+  const needsReading = needsReadingAttribute(toGigolingoLangKey(language));
   const toSave = createLearningItem({
     ...(generated ?? {
       word,
       translation: word,
       sentenceOrig: input.sentence,
       sentenceEng: input.sentence,
-      language: input.language,
+      language,
+      reading: needsReading ? word : '',
     }),
     word,
-    language: input.language,
+    language,
     userId: input.userId,
     source: input.source,
     dateAdded: generated?.dateAdded ?? new Date(),
   });
-  const saved = await deps.items.save(toSave);
+  const saved = await deps.items.save(applyReadingLikeGigolingo(toSave, language, toSave.sentenceOrig));
   return { item: saved, created: true };
 }
 
@@ -292,7 +327,7 @@ export function createVocabularyWordTap(input: {
           userId,
           word: request.token,
           sentence: request.sentence,
-          language: request.language,
+          language: resolveVocabCardLanguage(request.token, request.language),
           source: request.source,
         }
       );
