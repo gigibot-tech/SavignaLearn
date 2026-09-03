@@ -7,6 +7,7 @@ import { isMixedIdentityConfigured } from '@/adapters/mixedAuth';
 import { setKeepLoggedIn } from '@/adapters/authStorage';
 import { learningBotHref } from '@/adapters/postLogin';
 import { useAuthState, useServices } from './AppProviders';
+import { AlphaNotice } from '@/features/alpha';
 import { AuthHero, GradientScreen, InboxSkeleton, useThemeColors } from './chatUi';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -46,6 +47,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!user) {
     return (
       <GradientScreen scheme={scheme}>
+        <AlphaNotice colors={colors} />
         <AuthHero
           colors={colors}
           onSignIn={(email, password, keepLoggedIn) => enter(email, password, keepLoggedIn)}

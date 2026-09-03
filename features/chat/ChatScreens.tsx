@@ -60,6 +60,7 @@ import { useNotifications } from '@/features/notifications/NotificationProvider'
 import { useAppShell, useWideChatChrome } from '@/features/shell/AppShell';
 import { useVocabCardFromTap } from '@/features/vocabulary/CreateVocabCardModal';
 import { TippedVocabHome } from '@/features/vocabulary/vocabularyUi';
+import { AlphaNotice } from '@/features/alpha';
 import {
   ChatSettingsSheet,
   ChatsEmptyHome,
@@ -183,6 +184,7 @@ export function InboxScreen() {
   if (filtered.length === 0 && !debounced && !desktop) {
     return (
       <GradientScreen scheme={scheme}>
+        <AlphaNotice colors={colors} />
         <ChatsEmptyHome
           colors={colors}
           username={username}
@@ -204,6 +206,7 @@ export function InboxScreen() {
   if (desktop) {
     return (
       <GradientScreen scheme={scheme}>
+        <AlphaNotice colors={colors} />
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
             <SlayGif size={72} />
@@ -225,6 +228,7 @@ export function InboxScreen() {
 
   return (
     <GradientScreen scheme={scheme}>
+      <AlphaNotice colors={colors} compact />
       <View style={styles.listHeader}>
         <Pressable
           onPress={() => {
