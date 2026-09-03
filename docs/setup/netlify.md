@@ -34,7 +34,7 @@ Set these in Netlify → Site configuration → Environment variables (build **a
 | `EXPO_PUBLIC_SUPABASE_URL` / `EXPO_PUBLIC_SUPABASE_ANON_KEY` | SavignaLearn `savigna_*` chat tables |
 | `EXPO_PUBLIC_IDO_SUPABASE_*` | iDO sign-in + `ai-assist` |
 | `EXPO_PUBLIC_FOURSOME_SUPABASE_*` | fourSome sign-in |
-| `EXPO_PUBLIC_AI_BACKEND` | default chip (`demo` if unset) |
+| `EXPO_PUBLIC_AI_BACKEND` | default chip (`demo` if unset). Marked as a Netlify secret would fail the build because `demo` appears throughout the repo; `netlify.toml` omits this key (and `EXPO_PUBLIC_OPENAI_MODEL` / `EXPO_PUBLIC_CHAT_COMPLETION_URL`) from secrets scanning. Do not omit API keys. |
 | `EXPO_PUBLIC_OPENAI_API_KEY` | client “key configured” + native OpenAI |
 | `OPENAI_API_KEY` | **server** `/api/openai/chat` (preferred; not `EXPO_PUBLIC_`) |
 | `EXPO_PUBLIC_OPENAI_MODEL` | optional, default `gpt-4o-mini` |

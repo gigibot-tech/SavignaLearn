@@ -12,6 +12,9 @@
 [build.environment]
   NODE_VERSION = "22"
   NPM_FLAGS = "--include=dev"
+  # Public config values (demo, gpt-4o-mini, on-prem URL) are also in source.
+  # Do not omit API keys or Supabase secrets.
+  SECRETS_SCAN_OMIT_KEYS = "EXPO_PUBLIC_AI_BACKEND,EXPO_PUBLIC_OPENAI_MODEL,EXPO_PUBLIC_CHAT_COMPLETION_URL"
 
 [functions]
   node_bundler = "esbuild"
