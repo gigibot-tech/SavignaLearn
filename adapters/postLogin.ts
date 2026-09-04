@@ -8,9 +8,9 @@ export function learningBotHref(conversationId: string): `/chat/${string}` {
   return `/chat/${conversationId}`;
 }
 
-export function profileHref(userId: string, conversationId?: string): string {
-  const path = `/u/${encodeURIComponent(userId)}`;
-  return conversationId ? `${path}?chat=${encodeURIComponent(conversationId)}` : path;
+export function profileHref(userId: string, conversationId?: string): `/u/${string}` {
+  const path = `/u/${encodeURIComponent(userId)}` as `/u/${string}`;
+  return conversationId ? (`${path}?chat=${encodeURIComponent(conversationId)}` as `/u/${string}`) : path;
 }
 
 export function routeParam(value: string | string[] | undefined, fallback: string): string {

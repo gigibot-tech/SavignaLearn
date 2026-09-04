@@ -16,6 +16,7 @@ import {
 } from '@/adapters/chat';
 import { createVocabularyCardPort, memoryLearningItems } from '@/adapters/vocabulary';
 import { createFriendsRepository, usernameFromUser, memoryFriends } from '@/adapters/friends';
+import { createProfileRepository } from '@/adapters/profiles';
 import {
   applyFourSomeSession,
   applyIdoSession,
@@ -42,6 +43,7 @@ import type {
   ChatHistoryStore,
   ChatRepository,
   FriendsRepository,
+  ProfileRepository,
   TokenizerPort,
   TranslationEngine,
   VocabularyCardPort,
@@ -63,6 +65,7 @@ function buildServices(aiBackend: AiBackendId, fourSomeUserId: string | null) {
     learningItems: memoryLearningItems,
     historyStore: new InMemoryChatHistoryStore(authStorage),
     friends: createFriendsRepository(),
+    profiles: createProfileRepository(),
   };
 }
 
@@ -77,6 +80,7 @@ export interface AppServices {
   learningItems: LearningItemRepository;
   historyStore: ChatHistoryStore;
   friends: FriendsRepository;
+  profiles: ProfileRepository;
   aiBackend: AiBackendId;
   setAiBackend: (id: AiBackendId) => void;
   fourSomeUserId: string | null;
@@ -122,7 +126,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   const rebuild = useCallback((backend: AiBackendId, userId: string | null) => {
     setCore((prev) => {
       const next = buildServices(backend, userId);
-      return { ...next, auth: prev.auth, chat: prev.chat, historyStore: prev.historyStore, friends: prev.friends, learningItems: prev.learningItems };
+      return { ...next, auth: prev.auth, chat: prev.chat, historyStore: prev.historyStore, friends: prev.friends, profiles: prev.profiles, learningItems: prev.learningItems };
     });
   }, []);
 

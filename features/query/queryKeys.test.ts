@@ -7,5 +7,7 @@ describe('queryKeys', () => {
     expect(queryKeys.friends('u1')).not.toEqual(queryKeys.inbox('u1'));
     expect(queryKeys.thread('dm:a', 'u1')).not.toEqual(queryKeys.thread('dm:b', 'u1'));
     expect(queryKeys.thread('dm:a', 'u1')).not.toEqual(queryKeys.thread('dm:a', 'u2'));
+    expect(queryKeys.profiles(['a', 'b'])).toEqual(['profile', 'cards', 'a', 'b']);
+    expect(queryKeys.ownProfile('u1')[0]).toBe('profile');
   });
 });

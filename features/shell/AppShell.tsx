@@ -11,16 +11,27 @@ import { router, usePathname } from 'expo-router';
 import { learningBotHref, profileHref } from '@/adapters/postLogin';
 import { conversationTitleFor, findOrCreateDirectChat, publicHandleForUser } from '@/adapters/friends';
 import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
-import { friendInconsistencyMessage, type FriendRow } from '@/domain/friends';
+import {
+  cardIsOnline,
+  conversationPartnerIds,
+  formatCardPresence,
+  friendInconsistencyMessage,
+  LEARNING_BOT_USER_ID,
+  otherParticipantId,
+  profileCardFor,
+  type FriendRow,
+} from '@/domain';
 import type { Conversation } from '@/domain/chat';
 import { badgeLabel } from '@/domain/unread';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { InboxRow, InboxSkeleton, SlayGif, useThemeColors } from '@/features/chat/chatUi';
+import { PersonAvatar } from '@/features/chat/avatars';
 import { WhatsAppImportControl } from '@/features/chat/WhatsAppImportModal';
-import { isLearningBotConversation } from '@/domain';
+import { isLearningBotConversation } from '@/domain/chat';
 import type { ThemeColors } from '@/constants/Colors';
 import { useInboxLists } from '@/features/shell/useInboxLists';
+import { useOwnProfileQuery, useProfileCardsQuery } from '@/features/query/useChatQueries';
 
 export const DESKTOP_BREAKPOINT = 768;
 /** Thread header inline chat settings (L/XL). Sidebar already visible at 768. */
@@ -169,8 +180,14 @@ function FourSomeSidebar({
   const colors = useThemeColors(scheme);
   const { auth, chat, friends, bumpFriends } = useServices();
   const { user } = useAuthState();
-
+  const selfIds = useMemo(() => (user ? chatActorIds(user) : []), [user?.id, user?.idoUserId]);
   const accepted = friendRows.filter((row) => row.kind === 'accepted');
+  const cardIds = useMemo(
+    () => [...conversationPartnerIds(conversations, selfIds), ...friendRows.map((row) => row.userId)],
+    [conversations, selfIds, friendRows]
+  );
+  const cardsQuery = useProfileCardsQuery(cardIds);
+  const ownQuery = useOwnProfileQuery();
   const username = user ? publicHandleForUser(user) : '';
 
   const openFriendChat = async (row: FriendRow) => {
@@ -277,7 +294,10 @@ function FourSomeSidebar({
                   No friends yet — add someone by email or friend link.
                 </Text>
               ) : (
-                accepted.map((row) => (
+                accepted.map((row) => {
+                  const card = profileCardFor(cardsQuery.map, row.userId);
+                  const presence = formatCardPresence(card);
+                  return (
                   <View key={row.friendshipId} style={[styles.friendHit, { borderColor: colors.border }]}>
                     <Pressable
                       onPress={() => {
@@ -285,19 +305,30 @@ function FourSomeSidebar({
                         router.push(profileHref(row.userId));
                       }}
                       disabled={row.inconsistent}
-                      style={{ flex: 1 }}
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}
                       accessibilityRole="button"
                       accessibilityLabel={
                         row.inconsistent ? `${row.displayName} inconsistent` : `Open ${row.displayName} profile`
                       }
                     >
+                      <PersonAvatar
+                        size={36}
+                        name={row.displayName}
+                        photoUrl={card?.photoUrl}
+                        online={cardIsOnline(card)}
+                        showPresence
+                      />
+                      <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                      <Text style={{ color: colors.textMuted, fontSize: 12 }}>{row.handleLabel}</Text>
+                      <Text style={{ color: colors.textMuted, fontSize: 12 }} numberOfLines={1}>
+                        {presence || row.handleLabel}
+                      </Text>
                       {row.inconsistent ? (
                         <Text style={{ color: colors.danger, fontSize: 11, marginTop: 4, fontWeight: '700' }}>
                           Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
                         </Text>
                       ) : null}
+                      </View>
                     </Pressable>
                     {row.inconsistent ? (
                       <Pressable
@@ -319,7 +350,8 @@ function FourSomeSidebar({
                       </Pressable>
                     )}
                   </View>
-                ))
+                  );
+                })
               )}
             </ScrollView>
           ) : (
@@ -330,7 +362,12 @@ function FourSomeSidebar({
               {loading && conversations.length === 0 ? (
                 <InboxSkeleton colors={colors} />
               ) : (
-                conversations.map((item) => (
+                conversations.map((item) => {
+                  const other = isLearningBotConversation(item)
+                    ? LEARNING_BOT_USER_ID
+                    : otherParticipantId(item, selfIds);
+                  const card = profileCardFor(cardsQuery.map, other);
+                  return (
                 <InboxRow
                   key={item.id}
                   title={conversationTitleFor(item, user ? chatActorIds(user) : [], 'Chat')}
@@ -338,7 +375,8 @@ function FourSomeSidebar({
                   time={relativeTime(item.updatedAt)}
                   unread={item.unreadCount}
                   muted={item.muted}
-                  online
+                  online={cardIsOnline(card)}
+                  photoUrl={card?.photoUrl}
                   isBot={isLearningBotConversation(item)}
                   colors={colors}
                   onPress={() => {
@@ -346,15 +384,33 @@ function FourSomeSidebar({
                     router.push(learningBotHref(item.id));
                   }}
                 />
-                ))
+                  );
+                })
               )}
             </ScrollView>
           )}
 
           <View style={styles.footer}>
-            <Text style={{ color: colors.text, fontWeight: '700' }} numberOfLines={1}>
-              {username}
-            </Text>
+            <Pressable
+              onPress={() => {
+                onCollapse();
+                router.push('/settings');
+              }}
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}
+              accessibilityRole="button"
+              accessibilityLabel="Open profile settings"
+            >
+              <PersonAvatar
+                size={32}
+                name={username || 'You'}
+                photoUrl={ownQuery.data?.photoUrl}
+                online
+                showPresence
+              />
+              <Text style={{ color: colors.text, fontWeight: '700', flex: 1 }} numberOfLines={1}>
+                {username}
+              </Text>
+            </Pressable>
             <Pressable
               onPress={() => {
                 onCollapse();
@@ -481,9 +537,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
-    gap: 6,
+    paddingBottom: 8,
+    gap: 8,
   },
   collapsedSpacer: { flex: 1 },
   badge: {

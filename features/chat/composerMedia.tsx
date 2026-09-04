@@ -25,6 +25,34 @@ export type OutgoingMedia = {
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 
+export function HiddenImageFileInput({
+  inputRef,
+  label,
+  onPick,
+  accept = 'image/png,image/jpeg,image/gif,image/webp',
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  label: string;
+  onPick: (file: File) => void;
+  accept?: string;
+}) {
+  if (Platform.OS !== 'web') return null;
+  return (
+    <input
+      ref={inputRef as React.RefObject<HTMLInputElement>}
+      type="file"
+      accept={accept}
+      aria-label={label}
+      style={{ display: 'none' }}
+      onChange={(event) => {
+        const file = event.currentTarget.files?.[0];
+        event.currentTarget.value = '';
+        if (file) onPick(file);
+      }}
+    />
+  );
+}
+
 export function ChatMediaImage({
   url,
   sticker,
@@ -112,17 +140,10 @@ export function ComposerMediaButtons({
     <View style={styles.mediaBtns}>
       {Platform.OS === 'web' ? (
         <>
-          <input
-            ref={fileRef as React.RefObject<HTMLInputElement>}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            aria-label="Attach photo"
-            style={{ display: 'none' }}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = '';
-              if (file) void readPickedFile(file);
-            }}
+          <HiddenImageFileInput
+            inputRef={fileRef}
+            label="Attach photo"
+            onPick={(file) => void readPickedFile(file)}
           />
           <Pressable
             onPress={() => fileRef.current?.click()}

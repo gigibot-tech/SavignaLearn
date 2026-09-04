@@ -14,6 +14,7 @@ import {
   GradientScreen,
   useThemeColors,
 } from '@/features/chat/chatUi';
+import { ProfileSettingsCard } from '@/features/profile/ProfileSettingsCard';
 import { AppearanceThemePicker } from '@/features/shell/AppearanceProvider';
 import { useNotifications } from '@/features/notifications/NotificationProvider';
 
@@ -75,6 +76,8 @@ export default function SettingsScreen() {
           </Text>
           <Text style={{ color: colors.textMuted, marginTop: 6 }}>Density · {density}</Text>
         </GlassPanel>
+
+        {user ? <ProfileSettingsCard colors={colors} /> : null}
 
         <GlassPanel colors={colors} style={[styles.card, { marginTop: 12 }]}>
           <Text style={{ color: colors.text, fontWeight: '700' }}>Appearance</Text>

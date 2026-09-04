@@ -6,7 +6,7 @@
 | Chat persistence | MVP | See `chat-persistence.md` (human DMs share one `dm:` id on savigna_*; Bot stays local) |
 | Message delete | MVP | WhatsApp-like delete for me / delete for everyone. See `message-delete.md` |
 | Friends | MVP | See `friends.md` (email required; dual-directory existence; inconsistent + delete; demo mutual learner ↔ icestormfroste) |
-| Profile | MVP | Tap a name or thread header for stats + delete friend. See `profile.md` |
+| Profile | MVP | Photo, about, WhatsApp-style last seen / online. Settings edits your card; tap a name for `/u/<userId>`. See `profile.md` |
 | Auth | MVP | See `auth.md` (fourSome + iDO sign-in; demo only if neither is configured) |
 | Appearance | MVP | **Rosa** default; **Orange** (ember) in Settings. Saved on device. See `appearance.md` |
 | Alpha notice | Alpha | Screenshot warning on login + chats home. See `alpha.md` |

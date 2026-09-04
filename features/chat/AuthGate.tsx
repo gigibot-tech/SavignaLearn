@@ -8,6 +8,7 @@ import { setKeepLoggedIn } from '@/adapters/authStorage';
 import { learningBotHref } from '@/adapters/postLogin';
 import { useAuthState, useServices } from './AppProviders';
 import { AlphaNotice } from '@/features/alpha';
+import { PresenceHeartbeat } from '@/features/profile/PresenceHeartbeat';
 import { AuthHero, GradientScreen, InboxSkeleton, useThemeColors } from './chatUi';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -66,5 +67,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return children;
+  return (
+    <>
+      <PresenceHeartbeat />
+      {children}
+    </>
+  );
 }

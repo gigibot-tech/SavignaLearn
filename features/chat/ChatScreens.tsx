@@ -22,7 +22,10 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import {
   canDeleteForEveryone,
+  cardIsOnline,
+  conversationPartnerIds,
   createLearnerViewpoint,
+  formatCardPresence,
   imageUrlsOf,
   isDeletedForEveryone,
   isLearningBotConversation,
@@ -33,6 +36,7 @@ import {
   mergeMessageTimelines,
   messagesVisibleToViewer,
   otherParticipantId,
+  profileCardFor,
   renderViewpoint,
   shouldTranslateMessage,
   sourceMessageFromImage,
@@ -59,7 +63,7 @@ import { conversationTitleFor, currentFriendShareUrl, publicHandleCopyValue, pub
 import { processOutgoingTranslation, completeBilingualBotReply, persistCompletedHistory, recalculateBirkenbihlForThread, retryBubbleTranslations } from '@/adapters/translation';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from './AppProviders';
-import { useInboxQuery, useThreadQuery } from '@/features/query/useChatQueries';
+import { useInboxQuery, useProfileCardsQuery, useThreadQuery } from '@/features/query/useChatQueries';
 import { queryKeys } from '@/features/query/queryKeys';
 import type { ThreadSnapshot } from '@/features/query/fetchThread';
 import { useQueryClient } from '@tanstack/react-query';
@@ -119,6 +123,9 @@ export function InboxScreen() {
   const queryClient = useQueryClient();
   const inboxQuery = useInboxQuery();
   const items = inboxQuery.data ?? [];
+  const selfIds = useMemo(() => (user ? chatActorIds(user) : []), [user?.id, user?.idoUserId]);
+  const partnerIds = useMemo(() => conversationPartnerIds(items, selfIds), [items, selfIds]);
+  const cardsQuery = useProfileCardsQuery(partnerIds);
   const loading = Boolean(user) && inboxQuery.isLoading && inboxQuery.data === undefined;
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -295,19 +302,26 @@ export function InboxScreen() {
         data={filtered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ paddingBottom: 16 }}
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          const other = isLearningBotConversation(item)
+            ? LEARNING_BOT_USER_ID
+            : otherParticipantId(item, selfIds);
+          const card = profileCardFor(cardsQuery.map, other);
+          return (
           <InboxRow
             title={conversationTitleFor(item, user ? chatActorIds(user) : [], 'Chat')}
             preview={item.lastMessagePreview}
             time={relativeTime(item.updatedAt)}
             unread={item.unreadCount}
             muted={item.muted}
-            online
+            online={cardIsOnline(card)}
+            photoUrl={card?.photoUrl}
             isBot={isLearningBotConversation(item)}
             colors={colors}
             onPress={() => nav.push(learningBotHref(item.id))}
           />
-        )}
+          );
+        }}
       />
     </GradientScreen>
   );
@@ -383,6 +397,12 @@ export function ThreadScreen() {
   }, [wideChrome]);
 
   const isBotChat = Boolean(conversation && isLearningBotConversation(conversation));
+  const partnerId =
+    (conversation && otherParticipantId(conversation, selfIds)) ||
+    (isBotChat ? LEARNING_BOT_USER_ID : undefined);
+  const partnerCards = useProfileCardsQuery(partnerId ? [partnerId] : []);
+  const partnerCard = profileCardFor(partnerCards.map, partnerId);
+  const presenceLabel = formatCardPresence(partnerCard);
 
   const pipelineLabel = useMemo(() => {
     const resilient =
@@ -1130,11 +1150,7 @@ export function ThreadScreen() {
     <GradientScreen scheme={scheme} edges={['top', 'left', 'right', 'bottom']}>
       <ThreadChromeHeader
         title={conversationTitleFor(conversation, selfIds, LEARNING_BOT_DISPLAY_NAME)}
-        subtitle={
-          wideChrome
-            ? undefined
-            : `${nativeLang.toUpperCase()} → ${learningLang.toUpperCase()} · they read ${partnerLearningLang.toUpperCase()}`
-        }
+        subtitle={presenceLabel || undefined}
         pipelineLabel={wideChrome ? undefined : pipelineLabel}
         onBack={
           desktop
@@ -1148,6 +1164,7 @@ export function ThreadScreen() {
         colors={colors}
         scheme={scheme}
         isBot={isBotChat}
+        photoUrl={partnerCard?.photoUrl}
         onOpenProfile={() => {
           const other =
             (conversation && otherParticipantId(conversation, selfIds)) ||

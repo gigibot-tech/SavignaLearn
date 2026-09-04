@@ -62,6 +62,32 @@ export {
 export type { ConversationProfileStats } from './profileStats';
 export { conversationProfileStats } from './profileStats';
 
+export type { ProfileCard } from './profileCard';
+export {
+  PROFILE_BIO_MAX,
+  LEARNING_BOT_BIO,
+  clampProfileBio,
+  emptyProfileCard,
+  botProfileCard,
+  laterIso,
+  mergeProfileCards,
+  profileLookupIds,
+  indexProfileCards,
+  profileCardFor,
+  conversationPartnerIds,
+} from './profileCard';
+
+export type { PresenceKind } from './presence';
+export {
+  ONLINE_WINDOW_MS,
+  isBotPresenceUser,
+  isOnlineNow,
+  presenceKind,
+  formatPresenceLabel,
+  formatCardPresence,
+  cardIsOnline,
+} from './presence';
+
 export type { MessageDeleteScope } from './messageDelete';
 export {
   DELETE_FOR_EVERYONE_WINDOW_MS,

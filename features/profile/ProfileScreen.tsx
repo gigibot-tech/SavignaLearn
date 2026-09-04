@@ -6,34 +6,36 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import {
+  cardIsOnline,
   conversationProfileStats,
+  formatCardPresence,
   friendInconsistencyMessage,
   LEARNING_BOT_DISPLAY_NAME,
   LEARNING_BOT_USER_ID,
   isLearningBotConversation,
+  profileCardFor,
   type Conversation,
   type FriendRow,
   type PublicProfile,
   type SourceMessage,
 } from '@/domain';
 import { canonicalChatActorId } from '@/domain/friends';
+import { profileLookupIds } from '@/domain/profileCard';
 import { findOrCreateDirectChat } from '@/adapters/friends';
-import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
+import { chatActorIds, chatPersistenceUserId, isChatSelf } from '@/adapters/identity';
 import { learningBotHref, routeParam } from '@/adapters/postLogin';
 import { ensureLearningBotChat } from '@/adapters/chat';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
-import { useFriendsQuery, useInboxQuery } from '@/features/query/useChatQueries';
+import { useFriendsQuery, useInboxQuery, useProfileCardsQuery } from '@/features/query/useChatQueries';
 import {
   GlassPanel,
   GradientCta,
   GradientScreen,
-  SavignasBoiAvatar,
   useThemeColors,
 } from '@/features/chat/chatUi';
-import { useAppearance } from '@/features/shell/AppearanceProvider';
+import { PersonAvatar } from '@/features/chat/avatars';
 
 function formatDay(iso?: string): string {
   if (!iso) return '—';
@@ -48,12 +50,19 @@ export function ProfileScreen() {
   const chatParam = rawId.chat ? routeParam(rawId.chat, '') : '';
   const scheme = useColorScheme();
   const colors = useThemeColors(scheme);
-  const { pack } = useAppearance();
   const router = useRouter();
   const { chat, friends, learningItems, bumpFriends } = useServices();
   const { user } = useAuthState();
   const inboxQuery = useInboxQuery();
   const friendsQuery = useFriendsQuery();
+  const isSelf = Boolean(user && userId && isChatSelf(user, userId));
+  const cardIds = useMemo(() => {
+    const ids = userId ? profileLookupIds(userId) : [];
+    if (user && isSelf) ids.push(...chatActorIds(user));
+    return ids;
+  }, [userId, user, isSelf]);
+  const cardsQuery = useProfileCardsQuery(cardIds);
+  const card = profileCardFor(cardsQuery.map, userId) ?? profileCardFor(cardsQuery.map, user ? chatPersistenceUserId(user) : '');
   const selfIds = useMemo(() => (user ? chatActorIds(user) : []), [user?.id, user?.idoUserId]);
   const chatUserId = user ? chatPersistenceUserId(user) : undefined;
 
@@ -94,7 +103,14 @@ export function ProfileScreen() {
                 displayName: LEARNING_BOT_DISPLAY_NAME,
                 email: '',
               }
-            : null)
+            : isSelf && user
+              ? {
+                  id: userId,
+                  username: user.email?.split('@')[0] ?? 'me',
+                  displayName: user.displayName ?? user.email ?? 'You',
+                  email: user.email ?? '',
+                }
+              : null)
     );
 
     let conv: Conversation | null = chatParam ? await chat.getConversation(chatParam) : null;
@@ -128,7 +144,7 @@ export function ProfileScreen() {
         vocab,
       }).cards
     );
-  }, [user, chatUserId, userId, chatParam, friends, chat, learningItems, selfIds, isBot, friendsQuery.data, friendsQuery.isLoading, inboxQuery.data, inboxQuery.isLoading]);
+  }, [user, chatUserId, userId, chatParam, friends, chat, learningItems, selfIds, isBot, isSelf, friendsQuery.data, friendsQuery.isLoading, inboxQuery.data, inboxQuery.isLoading]);
 
   useEffect(() => {
     void load();
@@ -145,12 +161,13 @@ export function ProfileScreen() {
     [messages, selfIds, conversation?.id]
   );
 
-  const title = profile?.displayName ?? (isBot ? LEARNING_BOT_DISPLAY_NAME : 'Profile');
-  const handle = isBot ? 'Practice partner' : friend?.handleLabel ?? profile?.email ?? '';
-  const email = profile?.email ?? '';
+  const title = profile?.displayName ?? (isBot ? LEARNING_BOT_DISPLAY_NAME : isSelf ? user?.displayName ?? 'You' : 'Profile');
+  const handle = isBot ? 'Practice partner' : isSelf ? user?.email ?? '' : friend?.handleLabel ?? profile?.email ?? '';
+  const email = profile?.email ?? (isSelf ? user?.email ?? '' : '');
   const showEmail = Boolean(email) && !isBot && !handle.includes(email);
-  const canMessage = Boolean(conversation) && !friend?.inconsistent;
-  const canDelete = friend?.kind === 'accepted' && !isBot;
+  const presence = formatCardPresence(card);
+  const canMessage = Boolean(conversation) && !friend?.inconsistent && !isSelf;
+  const canDelete = friend?.kind === 'accepted' && !isBot && !isSelf;
 
   const openChat = () => {
     if (!conversation) return;
@@ -183,17 +200,24 @@ export function ProfileScreen() {
       </View>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <View style={styles.hero}>
-          {isBot ? (
-            <SavignasBoiAvatar size={88} />
-          ) : (
-            <LinearGradient colors={[...pack.gradients.ctaSoft]} style={styles.avatar}>
-              <Text style={[styles.avatarLetter, { color: colors.onSoft }]}>{title.slice(0, 1).toUpperCase()}</Text>
-            </LinearGradient>
-          )}
+          <PersonAvatar
+            size={88}
+            name={title}
+            photoUrl={card?.photoUrl}
+            isBot={isBot}
+            online={cardIsOnline(card)}
+            showPresence={!isSelf}
+          />
           <Text style={[styles.name, { color: colors.text }]}>{title}</Text>
+          {presence ? (
+            <Text style={{ color: colors.online, marginTop: 6, fontWeight: '700' }}>{presence}</Text>
+          ) : null}
           {handle ? <Text style={{ color: colors.textMuted, marginTop: 4 }}>{handle}</Text> : null}
           {showEmail ? (
             <Text style={{ color: colors.textMuted, marginTop: 2, fontSize: 13 }}>{email}</Text>
+          ) : null}
+          {card?.bio ? (
+            <Text style={{ color: colors.text, marginTop: 12, textAlign: 'center', lineHeight: 20 }}>{card.bio}</Text>
           ) : null}
           {friend?.inconsistent ? (
             <Text style={{ color: colors.danger, marginTop: 8, fontWeight: '700' }}>
@@ -215,7 +239,11 @@ export function ProfileScreen() {
           />
         </View>
 
-        {canMessage ? (
+        {isSelf ? (
+          <View style={{ marginTop: 8 }}>
+            <GradientCta label="Edit photo & about" onPress={() => router.push('/settings')} />
+          </View>
+        ) : canMessage ? (
           <View style={{ marginTop: 8 }}>
             <GradientCta label="Message" onPress={openChat} />
           </View>
@@ -299,14 +327,6 @@ const styles = StyleSheet.create({
   },
   topTitle: { fontSize: 16, fontWeight: '800' },
   hero: { alignItems: 'center', paddingVertical: 12 },
-  avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarLetter: { fontWeight: '800', fontSize: 36 },
   name: { fontSize: 26, fontWeight: '800', marginTop: 14, letterSpacing: -0.4 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 20, marginBottom: 16 },
   statCard: { width: '47%', flexGrow: 1, padding: 14 },

@@ -15,6 +15,7 @@ import type { MessageDeleteScope } from '@/domain/messageDelete';
 import type { LearningItem, LearningSource, MediaCompatibleBlock } from '@/domain/learning';
 import type { AsymmetricLanguageContext, ChatHistoryStore } from '@/domain/pipeline';
 import type { FriendRow, Friendship, PublicProfile } from '@/domain/friends';
+import type { ProfileCard } from '@/domain/profileCard';
 
 export interface ChatRepository {
   listConversations(userId: string): Promise<Conversation[]>;
@@ -180,6 +181,17 @@ export interface UserDirectoryPort {
   findById(id: string): Promise<PublicProfile | null>;
   findByUsername(username: string): Promise<PublicProfile | null>;
   listByUsername(username: string): Promise<PublicProfile[]>;
+}
+
+/** Photo, about, last-seen. Distinct from friend-directory PublicProfile. */
+export interface ProfileRepository {
+  get(userId: string): Promise<ProfileCard | null>;
+  list(userIds: string[]): Promise<ProfileCard[]>;
+  upsertOwn(
+    userId: string,
+    patch: { photoUrl?: string | null; bio?: string; presenceOptIn?: boolean }
+  ): Promise<ProfileCard>;
+  heartbeat(userId: string): Promise<void>;
 }
 
 export interface FriendsRepository {

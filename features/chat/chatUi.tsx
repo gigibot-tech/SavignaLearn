@@ -49,6 +49,9 @@ import {
 } from './composerMedia';
 import type { MessageMediaKind } from '@/domain/chat';
 import { TappableSentence, useWebClipboardJoin } from './TappableSentence';
+import { PersonAvatar, SavignasBoiAvatar } from './avatars';
+
+export { SavignasBoiAvatar };
 
 export function useThemeColors(scheme: 'light' | 'dark' | null | undefined): ThemeColors {
   const { pack } = useAppearance();
@@ -154,7 +157,6 @@ export function GradientCta({
   );
 }
 
-const SAVIGNAS_BOI_AVATAR = require('../../assets/savignas-boi.png');
 const SLAY_GIF = require('../../assets/slay.gif');
 
 export function SlayGif({ size = 72 }: { size?: number }) {
@@ -168,35 +170,6 @@ export function SlayGif({ size = 72 }: { size?: number }) {
   );
 }
 
-export function SavignasBoiAvatar({
-  size,
-  style,
-}: {
-  size: number;
-  style?: StyleProp<ViewStyle>;
-}) {
-  return (
-    <View
-      style={[
-        {
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          overflow: 'hidden',
-        },
-        style,
-      ]}
-    >
-      <Image
-        source={SAVIGNAS_BOI_AVATAR}
-        accessibilityLabel={LEARNING_BOT_DISPLAY_NAME}
-        style={{ width: size, height: size }}
-        resizeMode="cover"
-      />
-    </View>
-  );
-}
-
 export function ThreadChromeHeader({
   title,
   subtitle,
@@ -207,6 +180,7 @@ export function ThreadChromeHeader({
   colors,
   scheme,
   isBot,
+  photoUrl,
   leadingIcon = 'chevron-back',
   leadingLabel = 'Back',
   onOpenProfile,
@@ -220,6 +194,7 @@ export function ThreadChromeHeader({
   colors: ThemeColors;
   scheme?: 'light' | 'dark' | null;
   isBot?: boolean;
+  photoUrl?: string | null;
   /** Desktop collapsed sidebar: use menu to expand chats/friends. */
   leadingIcon?: React.ComponentProps<typeof Ionicons>['name'];
   leadingLabel?: string;
@@ -253,13 +228,13 @@ export function ThreadChromeHeader({
           accessibilityLabel={onOpenProfile ? `Open ${title} profile` : undefined}
           style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}
         >
-          {isBot ? (
-            <SavignasBoiAvatar size={32} style={shell.headerAvatar} />
-          ) : (
-            <LinearGradient colors={[...pack.gradients.ctaSoft]} style={shell.headerAvatar}>
-              <Ionicons name="person" size={16} color={colors.onSoft} />
-            </LinearGradient>
-          )}
+          <PersonAvatar
+            size={32}
+            name={title}
+            photoUrl={photoUrl}
+            isBot={isBot}
+            style={shell.headerAvatar}
+          />
           <View style={shell.headerTitles}>
             <Text style={[shell.threadTitle, { color: colors.text }]} numberOfLines={1}>
               {title}
@@ -1705,6 +1680,7 @@ export function InboxRow({
   muted,
   online,
   isBot,
+  photoUrl,
   colors,
   onPress,
 }: {
@@ -1715,10 +1691,10 @@ export function InboxRow({
   muted?: boolean;
   online?: boolean;
   isBot?: boolean;
+  photoUrl?: string | null;
   colors: ThemeColors;
   onPress: () => void;
 }) {
-  const { pack } = useAppearance();
   const titleStyle = useMemo(
     () =>
       [
@@ -1736,22 +1712,13 @@ export function InboxRow({
       accessibilityLabel={`${title}${unread ? `, ${unread} unread` : ''}`}
     >
       <View style={styles.avatarWrap}>
-        {isBot ? (
-          <SavignasBoiAvatar size={46} />
-        ) : (
-          <LinearGradient colors={[...pack.gradients.ctaSoft]} style={styles.avatar}>
-            <Text style={{ color: colors.onSoft, fontWeight: '800' }}>{title.slice(0, 1)}</Text>
-          </LinearGradient>
-        )}
-        <View
-          style={[
-            styles.presence,
-            {
-              opacity: presenceOpacity(online ? 'online' : 'offline'),
-              backgroundColor: online ? colors.online : 'transparent',
-              borderColor: online ? colors.online : colors.textMuted,
-            },
-          ]}
+        <PersonAvatar
+          size={46}
+          name={title}
+          photoUrl={photoUrl}
+          isBot={isBot}
+          online={online}
+          showPresence
         />
       </View>
       <View style={{ flex: 1 }}>

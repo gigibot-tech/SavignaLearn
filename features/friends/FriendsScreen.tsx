@@ -14,15 +14,17 @@ import {
   type FriendRequestError,
   type FriendRow,
 } from '@/domain/friends';
+import { cardIsOnline, formatCardPresence, profileCardFor } from '@/domain';
 import { currentFriendShareUrl, findOrCreateDirectChat, publicHandleForUser } from '@/adapters/friends';
 import { chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref, profileHref } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
-import { useFriendsQuery } from '@/features/query/useChatQueries';
+import { useFriendsQuery, useProfileCardsQuery } from '@/features/query/useChatQueries';
 import { queryKeys } from '@/features/query/queryKeys';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlassPanel, GradientCta, GradientScreen, useThemeColors } from '@/features/chat/chatUi';
+import { PersonAvatar } from '@/features/chat/avatars';
 import { WhatsAppImportControl } from '@/features/chat/WhatsAppImportModal';
 import { useAppShell } from '@/features/shell/AppShell';
 
@@ -60,6 +62,7 @@ export function FriendsScreen() {
   const [copied, setCopied] = useState<'link' | 'id' | null>(null);
   const friendsQuery = useFriendsQuery();
   const rows = friendsQuery.data ?? [];
+  const cardsQuery = useProfileCardsQuery(rows.map((row) => row.userId));
   const consumedAdd = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -200,15 +203,12 @@ export function FriendsScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={`Open ${row.displayName} profile`}
                 >
-                  <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                    {row.handleLabel}
-                  </Text>
-                  {row.inconsistent ? (
-                    <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
-                      Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
-                    </Text>
-                  ) : null}
+                  <FriendFace
+                    row={row}
+                    card={profileCardFor(cardsQuery.map, row.userId)}
+                    colors={colors}
+                    subtitle={row.handleLabel}
+                  />
                 </Pressable>
                 {row.inconsistent ? (
                   <Pressable
@@ -263,15 +263,12 @@ export function FriendsScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={`Open ${row.displayName} profile`}
                 >
-                  <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                  <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                    Waiting · {row.handleLabel}
-                  </Text>
-                  {row.inconsistent ? (
-                    <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
-                      Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
-                    </Text>
-                  ) : null}
+                  <FriendFace
+                    row={row}
+                    card={profileCardFor(cardsQuery.map, row.userId)}
+                    colors={colors}
+                    subtitle={`Waiting · ${row.handleLabel}`}
+                  />
                 </Pressable>
                 <Pressable
                   onPress={() => void removeRow(row)}
@@ -305,15 +302,12 @@ export function FriendsScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={row.inconsistent ? `${row.displayName} inconsistent` : `Open ${row.displayName} profile`}
                   >
-                    <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
-                    <Text style={{ color: colors.textMuted, fontSize: 12 }}>
-                      {row.handleLabel}
-                    </Text>
-                    {row.inconsistent ? (
-                      <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
-                        Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
-                      </Text>
-                    ) : null}
+                    <FriendFace
+                      row={row}
+                      card={profileCardFor(cardsQuery.map, row.userId)}
+                      colors={colors}
+                      subtitle={row.handleLabel}
+                    />
                   </Pressable>
                   {row.inconsistent ? (
                     <Pressable
@@ -409,6 +403,42 @@ export function FriendsScreen() {
         </Pressable>
       </Modal>
     </GradientScreen>
+  );
+}
+
+function FriendFace({
+  row,
+  card,
+  colors,
+  subtitle,
+}: {
+  row: FriendRow;
+  card: ReturnType<typeof profileCardFor>;
+  colors: ReturnType<typeof useThemeColors>;
+  subtitle: string;
+}) {
+  const presence = formatCardPresence(card);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+      <PersonAvatar
+        size={40}
+        name={row.displayName}
+        photoUrl={card?.photoUrl}
+        online={cardIsOnline(card)}
+        showPresence
+      />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={{ color: colors.text, fontWeight: '700' }}>{row.displayName}</Text>
+        <Text style={{ color: colors.textMuted, fontSize: 12 }} numberOfLines={1}>
+          {presence || subtitle}
+        </Text>
+        {row.inconsistent ? (
+          <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4, fontWeight: '700' }}>
+            Inconsistent · {friendInconsistencyMessage(row.inconsistency ?? 'not_found')}
+          </Text>
+        ) : null}
+      </View>
+    </View>
   );
 }
 
