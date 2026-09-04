@@ -16,7 +16,7 @@ import type { Conversation } from '@/domain/chat';
 import { badgeLabel } from '@/domain/unread';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
-import { InboxRow, SlayGif, useThemeColors } from '@/features/chat/chatUi';
+import { InboxRow, InboxSkeleton, SlayGif, useThemeColors } from '@/features/chat/chatUi';
 import { WhatsAppImportControl } from '@/features/chat/WhatsAppImportModal';
 import { isLearningBotConversation } from '@/domain';
 import type { ThemeColors } from '@/constants/Colors';
@@ -131,6 +131,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           friendRows={lists.friendRows}
           unread={lists.unread}
           incoming={lists.incoming}
+          loading={lists.loading}
           onToggle={toggleSidebar}
           onExpand={expandSidebar}
           onCollapse={collapseSidebar}
@@ -148,6 +149,7 @@ function FourSomeSidebar({
   friendRows,
   unread,
   incoming,
+  loading,
   onToggle,
   onExpand,
   onCollapse,
@@ -158,6 +160,7 @@ function FourSomeSidebar({
   friendRows: FriendRow[];
   unread: number;
   incoming: number;
+  loading?: boolean;
   onToggle: () => void;
   onExpand: () => void;
   onCollapse: () => void;
@@ -324,7 +327,10 @@ function FourSomeSidebar({
               <View style={{ paddingHorizontal: 4, paddingBottom: 8 }}>
                 <WhatsAppImportControl colors={colors} label="Import WhatsApp" />
               </View>
-              {conversations.map((item) => (
+              {loading && conversations.length === 0 ? (
+                <InboxSkeleton colors={colors} />
+              ) : (
+                conversations.map((item) => (
                 <InboxRow
                   key={item.id}
                   title={conversationTitleFor(item, user ? chatActorIds(user) : [], 'Chat')}
@@ -340,7 +346,8 @@ function FourSomeSidebar({
                     router.push(learningBotHref(item.id));
                   }}
                 />
-              ))}
+                ))
+              )}
             </ScrollView>
           )}
 

@@ -69,4 +69,4 @@ Tapping **Retry** runs `retryBubbleTranslations` for **that message only**:
 - SavignasBoi: `completeBilingualBotReply({ pairExisting: true })` (JSON `learning_text` + `native_text` of the existing bubble, not a new reply). Fallback: `processOutgoingTranslation`.
 - Birkenbihl mode: `recalculateBirkenbihlForMessage` (dedicated interlinear prompt).
 
-Then `saveTranslations` + the bubble refreshes. If the pair is still empty or copies source, Retry stays. Source stays visible. Missing learning translation uses the **source lang tag** (DE), never a fake ES label over German.
+Then `saveTranslations` + the bubble refreshes. While Retry / Recalculate / send-retry is in flight the bubble shows a spinner plus pulsing text-line skeletons on the missing translation (same pattern as thread hydrate). Source stays visible. If the pair is still empty or copies source, Retry stays. Missing learning translation uses the **source lang tag** (DE), never a fake ES label over German.

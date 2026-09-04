@@ -22,9 +22,10 @@ import { canonicalChatActorId } from '@/domain/friends';
 import { findOrCreateDirectChat } from '@/adapters/friends';
 import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref, routeParam } from '@/adapters/postLogin';
-import { ensureLearningBotChat, listInboxConversations } from '@/adapters/chat';
+import { ensureLearningBotChat } from '@/adapters/chat';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
+import { useFriendsQuery, useInboxQuery } from '@/features/query/useChatQueries';
 import {
   GlassPanel,
   GradientCta,
@@ -51,6 +52,8 @@ export function ProfileScreen() {
   const router = useRouter();
   const { chat, friends, learningItems, bumpFriends } = useServices();
   const { user } = useAuthState();
+  const inboxQuery = useInboxQuery();
+  const friendsQuery = useFriendsQuery();
   const selfIds = useMemo(() => (user ? chatActorIds(user) : []), [user?.id, user?.idoUserId]);
   const chatUserId = user ? chatPersistenceUserId(user) : undefined;
 
@@ -66,9 +69,10 @@ export function ProfileScreen() {
 
   const load = useCallback(async () => {
     if (!user || !chatUserId || !userId) return;
+    if (friendsQuery.isLoading || inboxQuery.isLoading) return;
     const ids = [userId, canonicalChatActorId(userId)];
     const listed = await friends.listProfiles([...new Set(ids)]);
-    const rows = await friends.reconcile(user.id);
+    const rows = friendsQuery.data ?? [];
     const row =
       rows.find(
         (item) => item.userId === userId || canonicalChatActorId(item.userId) === canonicalChatActorId(userId)
@@ -106,7 +110,7 @@ export function ProfileScreen() {
       );
     }
     if (!conv) {
-      const inbox = await listInboxConversations(chat, selfIds);
+      const inbox = inboxQuery.data ?? [];
       conv =
         inbox.find((item) =>
           isBot ? isLearningBotConversation(item) : item.participantIds.some((id) => ids.includes(id))
@@ -124,7 +128,7 @@ export function ProfileScreen() {
         vocab,
       }).cards
     );
-  }, [user, chatUserId, userId, chatParam, friends, chat, learningItems, selfIds, isBot]);
+  }, [user, chatUserId, userId, chatParam, friends, chat, learningItems, selfIds, isBot, friendsQuery.data, friendsQuery.isLoading, inboxQuery.data, inboxQuery.isLoading]);
 
   useEffect(() => {
     void load();

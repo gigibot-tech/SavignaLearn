@@ -2,7 +2,7 @@
 
 WhatsApp-style actions on a chat bubble: **Delete for me** and **Delete for everyone**.
 
-Long-press a message (right-click on web) to open the sheet.
+Long-press a message (right-click on web) to open the sheet. The bubble host is not a button so Retry / word taps can stay buttons without nested `<button>` markup.
 
 ## Delete for me
 

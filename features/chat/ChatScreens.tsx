@@ -52,16 +52,17 @@ import {
 import { shouldAutoReplyFromSendInput } from '@/domain/chatAutoReply';
 import {
   ensureLearningBotChat,
-  ensureHumanDmCloudSaved,
   labelForAiBackend,
-  listInboxConversations,
   ResilientChatCompletionAdapter,
 } from '@/adapters/chat';
 import { conversationTitleFor, currentFriendShareUrl, publicHandleCopyValue, publicHandleForUser } from '@/adapters/friends';
 import { processOutgoingTranslation, completeBilingualBotReply, persistCompletedHistory, recalculateBirkenbihlForThread, retryBubbleTranslations } from '@/adapters/translation';
-import { loadConversationThread } from '@/adapters/chatPersistence';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from './AppProviders';
+import { useInboxQuery, useThreadQuery } from '@/features/query/useChatQueries';
+import { queryKeys } from '@/features/query/queryKeys';
+import type { ThreadSnapshot } from '@/features/query/fetchThread';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNotifications } from '@/features/notifications/NotificationProvider';
 import { useAppShell, useWideChatChrome } from '@/features/shell/AppShell';
 import { useVocabCardFromTap } from '@/features/vocabulary/CreateVocabCardModal';
@@ -81,6 +82,7 @@ import {
   MessageBubble,
   ThreadChromeHeader,
   ThreadInlineChatSettings,
+  ThreadMessageSkeleton,
   useThemeColors,
 } from './chatUi';
 import type { OutgoingMedia } from './composerMedia';
@@ -111,11 +113,13 @@ export function InboxScreen() {
   const scheme = useColorScheme();
   const colors = useThemeColors(scheme);
   const { desktop, expandSidebar } = useAppShell();
-  const { chat, auth, friendsTick } = useServices();
+  const { chat, auth } = useServices();
   const { user, ready } = useAuthState();
   const nav = useRouter();
-  const [items, setItems] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const inboxQuery = useInboxQuery();
+  const items = inboxQuery.data ?? [];
+  const loading = Boolean(user) && inboxQuery.isLoading && inboxQuery.data === undefined;
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [copied, setCopied] = useState(false);
@@ -127,20 +131,14 @@ export function InboxScreen() {
 
   const refresh = useCallback(async () => {
     if (!user) return;
-    const ids = chatActorIds(user);
-    try {
-      await ensureLearningBotChat(chat, chatPersistenceUserId(user), ids);
-      setItems(await listInboxConversations(chat, ids));
-    } finally {
-      setLoading(false);
-    }
-  }, [chat, user]);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.inbox(user.id) });
+  }, [queryClient, user]);
 
   useFocusEffect(
     useCallback(() => {
       if (!ready || !user) return;
-      void refresh();
-    }, [ready, user, refresh, friendsTick])
+      void queryClient.invalidateQueries({ queryKey: queryKeys.inbox(user.id) });
+    }, [ready, user, queryClient])
   );
 
   const filtered = useMemo(() => {
@@ -342,12 +340,16 @@ export function ThreadScreen() {
     [user?.id, user?.idoUserId]
   );
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const threadQuery = useThreadQuery(conversationId);
+  const threadUserId = user ? chatPersistenceUserId(user) : 'anon';
   const { showNotification } = useNotifications();
   const wideChrome = useWideChatChrome();
   const { desktop, expandSidebar, sidebarExpanded } = useAppShell();
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<SourceMessage[]>([]);
+  const [boundId, setBoundId] = useState(conversationId);
   const [translations, setTranslations] = useState<Record<string, LineTranslation[]>>({});
   const [mode, setMode] = useState<DisplayMode>('lines');
   const [botReplies, setBotReplies] = useState(true);
@@ -360,6 +362,8 @@ export function ThreadScreen() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [birkenBusy, setBirkenBusy] = useState(false);
   const [translationRetryIds, setTranslationRetryIds] = useState<string[]>([]);
+  const [birkenRetryIds, setBirkenRetryIds] = useState<string[]>([]);
+  const [translatingIds, setTranslatingIds] = useState<string[]>([]);
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
   const [deleteTarget, setDeleteTarget] = useState<SourceMessage | null>(null);
   const visibleMessages = useMemo(
@@ -372,6 +376,7 @@ export function ThreadScreen() {
   translationsRef.current = translations;
   const birkenInFlight = useRef(new Set<string>());
   const translationRetryInFlight = useRef(new Set<string>());
+  const translatingInFlight = useRef(new Set<string>());
 
   useEffect(() => {
     if (wideChrome) setSettingsOpen(false);
@@ -537,6 +542,7 @@ export function ThreadScreen() {
         return m;
       });
       for (const msg of pending) birkenInFlight.current.add(msg.id);
+      setBirkenRetryIds([...birkenInFlight.current]);
       setBirkenBusy(true);
       try {
         const { translationsByMessage, errors } = await recalculateBirkenbihlForThread({
@@ -577,6 +583,7 @@ export function ThreadScreen() {
         }
       } finally {
         for (const msg of pending) birkenInFlight.current.delete(msg.id);
+        setBirkenRetryIds([...birkenInFlight.current]);
         setBirkenBusy(birkenInFlight.current.size > 0);
       }
     },
@@ -659,32 +666,20 @@ export function ThreadScreen() {
     [user, conversation, chat, messages, retranslateThread, selfIds]
   );
 
-  const load = useCallback(async () => {
-    if (user && chatUserId) await ensureLearningBotChat(chat, chatUserId, selfIds);
-    let conv = await chat.getConversation(conversationId);
-    let activeId = conversationId;
-    if (!conv && user && chatUserId) {
-      const botId = await ensureLearningBotChat(chat, chatUserId, selfIds);
-      if (botId !== conversationId) {
-        router.replace(learningBotHref(botId));
-        return;
+  const applySnapshot = (snapshot: ThreadSnapshot | undefined, mergePending: boolean) => {
+    if (!snapshot || snapshot.redirectTo) {
+      if (!mergePending) {
+        setConversation(null);
+        setMessages([]);
+        setTranslations({});
+        setHiddenIds(new Set());
       }
-      conv = await chat.getConversation(botId);
-      activeId = botId;
+      return;
     }
-    setConversation(conv ? { ...conv, unreadCount: 0 } : conv);
-    if (chatUserId) {
-      await chat.markConversationRead(activeId, selfIds.length > 0 ? selfIds : [chatUserId]);
-      if (conv && conv.unreadCount > 0) bumpFriends();
-    }
+    const conv = snapshot.conversation;
+    setConversation(conv);
+    setHiddenIds(new Set(snapshot.hiddenIds));
     setBotReplies(conv?.aiEnabled !== false);
-    if (conv && !isLearningBotConversation(conv)) {
-      const cloudId = await ensureHumanDmCloudSaved(chat, conv.id);
-      if (cloudId && cloudId !== activeId) {
-        router.replace(learningBotHref(cloudId));
-        return;
-      }
-    }
     const participant = conv?.participants.find((p) => (user ? isChatSelf(user, p.userId) : false));
     const receiverId = conv && user ? otherParticipantId(conv, selfIds) : undefined;
     const receiver = conv?.participants.find((p) => p.userId === receiverId);
@@ -693,28 +688,63 @@ export function ThreadScreen() {
       setLearningLang(participant.learningLang);
     }
     if (receiver) setPartnerLearningLang(receiver.learningLang);
-    const thread = await loadConversationThread({
-      chat,
-      historyStore,
-      conversationId: activeId,
-      userId: chatUserId ?? user?.id,
-    });
-    if (chatUserId) {
-      const hides = await chat.listHiddenMessageIds(chatUserId).catch(() => []);
-      setHiddenIds(new Set(hides));
-    }
     setMessages((prev) => {
+      if (!mergePending) return snapshot.messages;
       const pending = prev.filter(
         (item) =>
-          inFlight.current.has(item.id) && !thread.messages.some((stored) => stored.id === item.id)
+          inFlight.current.has(item.id) && !snapshot.messages.some((stored) => stored.id === item.id)
       );
-      return upsertMessages(thread.messages, ...pending);
+      return upsertMessages(snapshot.messages, ...pending);
     });
-    setTranslations((prev) => mergeTranslationMaps(prev, thread.translations));
-  }, [chat, historyStore, conversationId, user?.id, chatUserId, selfIds, router, bumpFriends]);
+    setTranslations((prev) =>
+      mergePending ? mergeTranslationMaps(prev, snapshot.translations) : snapshot.translations
+    );
+  };
+
+  if (boundId !== conversationId) {
+    setBoundId(conversationId);
+    setTranslationRetryIds([]);
+    setBirkenRetryIds([]);
+    setTranslatingIds([]);
+    translatingInFlight.current.clear();
+    birkenInFlight.current.clear();
+    translationRetryInFlight.current.clear();
+    const cached =
+      threadQuery.data && threadQuery.data.activeId === conversationId && !threadQuery.data.redirectTo
+        ? threadQuery.data
+        : queryClient.getQueryData<ThreadSnapshot>(queryKeys.thread(conversationId, threadUserId));
+    applySnapshot(
+      cached && cached.activeId === conversationId && !cached.redirectTo ? cached : undefined,
+      false
+    );
+  }
 
   useEffect(() => {
-    void load();
+    if (threadQuery.data?.redirectTo) {
+      router.replace(learningBotHref(threadQuery.data.redirectTo));
+    }
+  }, [threadQuery.data?.redirectTo, router]);
+
+  useEffect(() => {
+    if (!threadQuery.isFetchedAfterMount) return;
+    if (threadQuery.data?.hadUnread) bumpFriends();
+  }, [
+    threadQuery.dataUpdatedAt,
+    threadQuery.isFetchedAfterMount,
+    threadQuery.data?.hadUnread,
+    bumpFriends,
+  ]);
+
+  useEffect(() => {
+    const snapshot = threadQuery.data;
+    if (!snapshot || snapshot.redirectTo) return;
+    if (snapshot.activeId !== conversationId) return;
+    applySnapshot(snapshot, true);
+    // applySnapshot closes over inFlight / langs; dataUpdatedAt is the fetch signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadQuery.dataUpdatedAt, conversationId]);
+
+  useEffect(() => {
     return chat.subscribe(conversationId, (next) => {
       setMessages((prev) => {
         const pending = prev.filter(
@@ -722,6 +752,10 @@ export function ThreadScreen() {
         );
         return upsertMessages(next, ...pending);
       });
+      queryClient.setQueryData<ThreadSnapshot>(
+        queryKeys.thread(conversationId, threadUserId),
+        (old) => (old ? { ...old, messages: upsertMessages(next) } : old)
+      );
       void (async () => {
         if (chatUserId) {
           await chat.markConversationRead(conversationId, selfIds.length > 0 ? selfIds : [chatUserId]);
@@ -741,7 +775,7 @@ export function ThreadScreen() {
         });
       })();
     });
-  }, [chat, conversationId, load]);
+  }, [chat, conversationId, chatUserId, selfIds, bumpFriends, queryClient, threadUserId]);
 
   useEffect(() => {
     if (visibleMessages.length === 0) return;
@@ -794,6 +828,8 @@ export function ThreadScreen() {
 
     if (inFlight.current.has(optimistic.id)) return;
     inFlight.current.add(optimistic.id);
+    translatingInFlight.current.add(optimistic.id);
+    setTranslatingIds([...translatingInFlight.current]);
     setSendError(null);
     setMessages((prev) =>
       retryOf
@@ -808,6 +844,8 @@ export function ThreadScreen() {
       );
       setSendError('Sign in to send.');
       inFlight.current.delete(optimistic.id);
+      translatingInFlight.current.delete(optimistic.id);
+      setTranslatingIds([...translatingInFlight.current]);
       return;
     }
 
@@ -828,6 +866,8 @@ export function ThreadScreen() {
       );
       setSendError("Couldn't open this chat.");
       inFlight.current.delete(optimistic.id);
+      translatingInFlight.current.delete(optimistic.id);
+      setTranslatingIds([...translatingInFlight.current]);
       return;
     }
 
@@ -856,23 +896,28 @@ export function ThreadScreen() {
       if (alreadyStored) await chat.updateReceipt(saved.id, 'sent');
       setMessages((prev) => upsertMessages(prev, saved));
 
-      const { translations: all } = await processOutgoingTranslation({
-        message: saved,
-        asymmetric,
-        mode: toTranslationMode(mode),
-        engine: translation,
-        historyStore,
-        knownSourceLang: nativeLang,
-        existingTranslations: translationsRef.current[saved.id],
-      });
-      await chat.saveTranslations(saved.id, all);
-      setTranslations((prev) => ({
-        ...prev,
-        [saved.id]: mergeLineTranslations(prev[saved.id] ?? [], all),
-      }));
-      await chat.updateReceipt(saved.id, 'delivered');
-      saved = { ...saved, receipt: 'delivered' };
-      setMessages((prev) => upsertMessages(prev, saved));
+      try {
+        const { translations: all } = await processOutgoingTranslation({
+          message: saved,
+          asymmetric,
+          mode: toTranslationMode(mode),
+          engine: translation,
+          historyStore,
+          knownSourceLang: nativeLang,
+          existingTranslations: translationsRef.current[saved.id],
+        });
+        await chat.saveTranslations(saved.id, all);
+        setTranslations((prev) => ({
+          ...prev,
+          [saved.id]: mergeLineTranslations(prev[saved.id] ?? [], all),
+        }));
+        await chat.updateReceipt(saved.id, 'delivered');
+        saved = { ...saved, receipt: 'delivered' };
+        setMessages((prev) => upsertMessages(prev, saved));
+      } finally {
+        translatingInFlight.current.delete(saved.id);
+        setTranslatingIds([...translatingInFlight.current]);
+      }
     } catch (error) {
       setMessages((prev) =>
         prev.map((m) => (m.id === optimistic.id ? { ...m, receipt: 'failed' } : m))
@@ -895,6 +940,8 @@ export function ThreadScreen() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
       inFlight.current.delete(optimistic.id);
+      translatingInFlight.current.delete(optimistic.id);
+      setTranslatingIds([...translatingInFlight.current]);
       return;
     }
 
@@ -1057,6 +1104,7 @@ export function ThreadScreen() {
     }
   };
 
+  const fetchingThread = boundId !== conversationId || (threadQuery.isLoading && !threadQuery.data);
   const chatSettings = {
     colors,
     mode,
@@ -1113,76 +1161,92 @@ export function ThreadScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
       >
-        <FlatList
-          ref={listRef}
-          data={visibleMessages}
-          extraData={{ messages: visibleMessages, translations, mode, birkenBusy, translationRetryIds, hiddenIds }}
-          keyExtractor={(item) => item.id}
-          style={styles.flex}
-          initialNumToRender={Math.max(visibleMessages.length, 32)}
-          windowSize={21}
-          keyboardShouldPersistTaps="handled"
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-          contentContainerStyle={{ padding: 16, paddingBottom: 8, flexGrow: 1 }}
-          renderItem={({ item }) => {
-            const mine = isChatSelf(user, item.authorId);
-            const kind = item.kind === 'ai' || item.authorId === LEARNING_BOT_USER_ID ? 'ai' : item.kind;
-            const itemForView = mine
-              ? { ...item, sourceLang: nativeLang }
-              : item.authorId === LEARNING_BOT_USER_ID || item.kind === 'ai'
-                ? { ...item, sourceLang: learningLang }
-                : item;
-            const lines = renderViewpoint(itemForView, translations[item.id] ?? [], viewpoint, {
-              own: mine,
-            });
-            const mismatch = translationMismatch({
-              message: itemForView,
-              translations: translations[item.id] ?? [],
-              viewpoint,
-            });
-            const canRetryTranslation =
-              !isDeletedForEveryone(item) &&
-              mismatch &&
-              item.receipt !== 'failed' &&
-              shouldTranslateMessage(item) &&
-              mediaKindOf(item) !== 'sticker';
-            return (
-              <MessageBubble
-                mine={mine}
-                kind={kind}
-                lines={isDeletedForEveryone(item) ? [] : lines}
-                mode={mode}
-                language={itemForView.sourceLang}
-                tokenizer={tokenizer}
-                wordTap={wordTap}
-                source={{ conversationId, messageId: item.id }}
-                colors={colors}
-                receipt={item.receipt}
-                failed={item.receipt === 'failed'}
-                errorCopy={item.receipt === 'failed' ? sendError ?? undefined : undefined}
-                streaming={streamingId === item.id}
-                nativeLang={nativeLang}
-                learningLang={learningLang}
-                imageUrls={isDeletedForEveryone(item) ? [] : imageUrlsOf(item)}
-                mediaKind={isDeletedForEveryone(item) ? undefined : mediaKindOf(item)}
-                deleted={isDeletedForEveryone(item)}
-                onRequestDelete={() => setDeleteTarget(item)}
-                onRetry={() => void send({ type: 'retry', message: item })}
-                onRetryTranslation={
-                  canRetryTranslation ? () => void retryTranslation(item, mismatch) : undefined
-                }
-                translationRetryReason={canRetryTranslation ? mismatch : null}
-                translationRetryBusy={translationRetryIds.includes(item.id)}
-                onRetryBirkenbihl={
-                  mode === 'birkenbihl' && shouldTranslateMessage(item)
-                    ? () => void runBirkenbihlRecalc([item], false)
-                    : undefined
-                }
-                birkenbihlBusy={birkenInFlight.current.has(item.id)}
-              />
-            );
+        <View style={styles.flex}>
+          {fetchingThread && visibleMessages.length === 0 ? (
+            <ThreadMessageSkeleton colors={colors} />
+          ) : (
+            <FlatList
+              ref={listRef}
+              data={visibleMessages}
+              extraData={{
+            messages: visibleMessages,
+            translations,
+            mode,
+            birkenBusy,
+            birkenRetryIds,
+            translationRetryIds,
+            translatingIds,
+            hiddenIds,
           }}
-        />
+              keyExtractor={(item) => item.id}
+              style={styles.flex}
+              initialNumToRender={Math.max(visibleMessages.length, 32)}
+              windowSize={21}
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+              contentContainerStyle={{ padding: 16, paddingBottom: 8, flexGrow: 1 }}
+              renderItem={({ item }) => {
+                const mine = isChatSelf(user, item.authorId);
+                const kind = item.kind === 'ai' || item.authorId === LEARNING_BOT_USER_ID ? 'ai' : item.kind;
+                const itemForView = mine
+                  ? { ...item, sourceLang: nativeLang }
+                  : item.authorId === LEARNING_BOT_USER_ID || item.kind === 'ai'
+                    ? { ...item, sourceLang: learningLang }
+                    : item;
+                const lines = renderViewpoint(itemForView, translations[item.id] ?? [], viewpoint, {
+                  own: mine,
+                });
+                const mismatch = translationMismatch({
+                  message: itemForView,
+                  translations: translations[item.id] ?? [],
+                  viewpoint,
+                });
+                const canRetryTranslation =
+                  !isDeletedForEveryone(item) &&
+                  mismatch &&
+                  item.receipt !== 'failed' &&
+                  shouldTranslateMessage(item) &&
+                  mediaKindOf(item) !== 'sticker';
+                return (
+                  <MessageBubble
+                    mine={mine}
+                    kind={kind}
+                    lines={isDeletedForEveryone(item) ? [] : lines}
+                    mode={mode}
+                    language={itemForView.sourceLang}
+                    tokenizer={tokenizer}
+                    wordTap={wordTap}
+                    source={{ conversationId, messageId: item.id }}
+                    colors={colors}
+                    receipt={item.receipt}
+                    failed={item.receipt === 'failed'}
+                    errorCopy={item.receipt === 'failed' ? sendError ?? undefined : undefined}
+                    streaming={streamingId === item.id}
+                    nativeLang={nativeLang}
+                    learningLang={learningLang}
+                    imageUrls={isDeletedForEveryone(item) ? [] : imageUrlsOf(item)}
+                    mediaKind={isDeletedForEveryone(item) ? undefined : mediaKindOf(item)}
+                    deleted={isDeletedForEveryone(item)}
+                    onRequestDelete={() => setDeleteTarget(item)}
+                    onRetry={() => void send({ type: 'retry', message: item })}
+                    onRetryTranslation={
+                      canRetryTranslation ? () => void retryTranslation(item, mismatch) : undefined
+                    }
+                    translationRetryReason={canRetryTranslation ? mismatch : null}
+                    translationRetryBusy={translationRetryIds.includes(item.id)}
+                    translating={translatingIds.includes(item.id)}
+                    onRetryBirkenbihl={
+                      mode === 'birkenbihl' && shouldTranslateMessage(item)
+                        ? () => void runBirkenbihlRecalc([item], false)
+                        : undefined
+                    }
+                    birkenbihlBusy={birkenRetryIds.includes(item.id)}
+                  />
+                );
+              }}
+            />
+          )}
+        </View>
         {sendError ? (
           <Text
             style={{ color: colors.danger, paddingHorizontal: 16, paddingBottom: 6, fontSize: 13 }}

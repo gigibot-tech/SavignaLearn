@@ -12,6 +12,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { AppProviders, useAuthState, useServices } from '@/features/chat/AppProviders';
 import { AuthGate } from '@/features/chat/AuthGate';
 import { NotificationsProvider } from '@/features/notifications/NotificationProvider';
+import { QueryProvider } from '@/features/query/QueryProvider';
 import { AppShell } from '@/features/shell/AppShell';
 import { useAppearance } from '@/features/shell/AppearanceProvider';
 
@@ -41,13 +42,15 @@ export default function RootLayout() {
 
   return (
     <AppProviders>
-      <NotificationsProvider>
-        <AuthGate>
-          <AppShell>
-            <RootLayoutNav />
-          </AppShell>
-        </AuthGate>
-      </NotificationsProvider>
+      <QueryProvider>
+        <NotificationsProvider>
+          <AuthGate>
+            <AppShell>
+              <RootLayoutNav />
+            </AppShell>
+          </AuthGate>
+        </NotificationsProvider>
+      </QueryProvider>
     </AppProviders>
   );
 }

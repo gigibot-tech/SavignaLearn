@@ -15,8 +15,8 @@ import {
   parseWhatsAppTranscript,
   type WhatsAppParseResult,
 } from '@/domain/whatsappImport';
-import type { FriendRow } from '@/domain/friends';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
+import { useFriendsQuery } from '@/features/query/useChatQueries';
 import { GradientCta, useThemeColors } from '@/features/chat/chatUi';
 import { useAppShell } from '@/features/shell/AppShell';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -50,7 +50,7 @@ export function WhatsAppImportControl({
 export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const scheme = useColorScheme();
   const colors = useThemeColors(scheme);
-  const { chat, friends, friendsTick, bumpFriends } = useServices();
+  const { chat, bumpFriends } = useServices();
   const { user } = useAuthState();
   const { collapseSidebar } = useAppShell();
   const [paste, setPaste] = useState('');
@@ -58,16 +58,12 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
   const [selfSpeaker, setSelfSpeaker] = useState<string | null>(null);
   const [otherSpeaker, setOtherSpeaker] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState<string>(LOCAL_PARTNER);
-  const [friendsRows, setFriendsRows] = useState<FriendRow[]>([]);
+  const friendsQuery = useFriendsQuery();
+  const friendsRows = (friendsQuery.data ?? []).filter(
+    (row) => row.kind === 'accepted' && !row.inconsistent
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!visible || !user) return;
-    void friends.reconcile(user.id).then((rows) => {
-      setFriendsRows(rows.filter((row) => row.kind === 'accepted' && !row.inconsistent));
-    });
-  }, [visible, user, friends, friendsTick]);
 
   const selfHints = useMemo(
     () =>

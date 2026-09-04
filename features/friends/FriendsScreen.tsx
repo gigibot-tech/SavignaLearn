@@ -19,6 +19,9 @@ import { chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref, profileHref } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
+import { useFriendsQuery } from '@/features/query/useChatQueries';
+import { queryKeys } from '@/features/query/queryKeys';
+import { useQueryClient } from '@tanstack/react-query';
 import { GlassPanel, GradientCta, GradientScreen, useThemeColors } from '@/features/chat/chatUi';
 import { WhatsAppImportControl } from '@/features/chat/WhatsAppImportModal';
 import { useAppShell } from '@/features/shell/AppShell';
@@ -46,25 +49,23 @@ export function FriendsScreen() {
   const scheme = useColorScheme();
   const colors = useThemeColors(scheme);
   const { desktop } = useAppShell();
-  const { friends, chat, bumpFriends, friendsTick } = useServices();
+  const { friends, chat, bumpFriends } = useServices();
   const { user } = useAuthState();
+  const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ add?: string | string[] }>();
   const addParam = Array.isArray(params.add) ? params.add[0] : params.add;
   const [query, setQuery] = useState('');
   const [modalError, setModalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<'link' | 'id' | null>(null);
-  const [rows, setRows] = useState<FriendRow[]>([]);
+  const friendsQuery = useFriendsQuery();
+  const rows = friendsQuery.data ?? [];
   const consumedAdd = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!user) return;
-    setRows(await friends.reconcile(user.id));
-  }, [friends, user]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh, friendsTick]);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.friends(user.id) });
+  }, [queryClient, user]);
 
   const add = async (raw?: string) => {
     if (!user) return;

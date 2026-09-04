@@ -3,9 +3,10 @@
  * LONG-TERM: WordTapPort only — never call VocabularyCardPort from here.
  */
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Image,
   Modal,
   Platform,
@@ -360,6 +361,7 @@ export function MessageLines({
   onAccent,
   nativeLang,
   learningLang,
+  busy,
 }: {
   lines: DisplayLine[];
   mode: 'lines' | 'birkenbihl';
@@ -371,6 +373,7 @@ export function MessageLines({
   onAccent?: boolean;
   nativeLang?: string;
   learningLang?: string;
+  busy?: boolean;
 }) {
   const learningColor = onAccent ? colors.onAccent : colors.text;
   const nativeColor = onAccent ? 'rgba(255,255,255,0.78)' : colors.textMuted;
@@ -413,12 +416,16 @@ export function MessageLines({
                 }
                 style={[styles.learningText, { color: learningColor }]}
               />
-              <Text
-                style={[styles.nativeText, { color: nativeColor, minHeight: 16 }]}
-                accessibilityLabel="Birkenbihl translation unavailable"
-              >
-                {' '}
-              </Text>
+              {busy ? (
+                <LineBusyBars colors={colors} onAccent={onAccent} />
+              ) : (
+                <Text
+                  style={[styles.nativeText, { color: nativeColor, minHeight: 16 }]}
+                  accessibilityLabel="Birkenbihl translation unavailable"
+                >
+                  {' '}
+                </Text>
+              )}
             </View>
           );
         }
@@ -457,6 +464,8 @@ export function MessageLines({
                   {line.nativeText}
                 </Text>
               </>
+            ) : busy ? (
+              <LineBusyBars colors={colors} onAccent={onAccent} />
             ) : null}
           </View>
         );
@@ -489,6 +498,7 @@ export function MessageBubble({
   onRetryTranslation,
   translationRetryReason,
   translationRetryBusy,
+  translating,
   deleted,
   onRequestDelete,
 }: {
@@ -515,6 +525,7 @@ export function MessageBubble({
   onRetryTranslation?: () => void;
   translationRetryReason?: TranslationMismatchReason | null;
   translationRetryBusy?: boolean;
+  translating?: boolean;
   deleted?: boolean;
   onRequestDelete?: () => void;
 }) {
@@ -562,55 +573,61 @@ export function MessageBubble({
         onAccent={mine && kind === 'user' && !failed}
         nativeLang={nativeLang}
         learningLang={learningLang}
+        busy={Boolean(
+          (receipt === 'pending' || translating || translationRetryBusy || birkenbihlBusy) && !isSticker
+        )}
       />
     );
+  const sendBusy = receipt === 'pending';
   const missingBirken = lines.some((line) => !line.birkenbihl);
   const showTranslationRetry =
-    Boolean(onRetryTranslation && translationRetryReason && !isSticker && !failed);
+    !isSticker &&
+    !failed &&
+    !sendBusy &&
+    Boolean((onRetryTranslation && translationRetryReason) || translationRetryBusy);
   const retryTint = mine && kind === 'user' && !failed ? 'rgba(255,255,255,0.92)' : colors.accent;
   const translationRetry = showTranslationRetry ? (
-    <Pressable
+    <RetryAction
+      tint={retryTint}
+      busy={Boolean(translationRetryBusy)}
+      busyLabel="Retrying…"
+      idleLabel="Retry"
+      why={translationRetryReason ? translationRetryWhy(translationRetryReason) : undefined}
       onPress={onRetryTranslation}
-      disabled={translationRetryBusy}
-      accessibilityRole="button"
-      accessibilityLabel={`Retry, ${translationRetryWhy(translationRetryReason!)}`}
-      accessibilityState={{ disabled: Boolean(translationRetryBusy), busy: Boolean(translationRetryBusy) }}
-      style={styles.retryHit}
-    >
-      <Ionicons name="refresh" size={14} color={retryTint} />
-      <Text style={[styles.retryLabel, { color: retryTint }]}>
-        {translationRetryBusy ? 'Retrying…' : 'Retry'}
-      </Text>
-      {translationRetryReason && !translationRetryBusy ? (
-        <Text style={[styles.retryWhy, { color: retryTint }]}>
-          {translationRetryWhy(translationRetryReason)}
-        </Text>
-      ) : null}
-    </Pressable>
+      accessibilityLabel={
+        translationRetryBusy
+          ? 'Retrying translation'
+          : `Retry, ${translationRetryWhy(translationRetryReason!)}`
+      }
+    />
   ) : null;
   const birkenRetry =
     mode === 'birkenbihl' &&
-    onRetryBirkenbihl &&
     !isSticker &&
-    !showTranslationRetry ? (
-      <Pressable
+    !failed &&
+    !sendBusy &&
+    !showTranslationRetry &&
+    Boolean(onRetryBirkenbihl || birkenbihlBusy) ? (
+      <RetryAction
+        tint={retryTint}
+        busy={Boolean(birkenbihlBusy)}
+        busyLabel="Recalculating…"
+        idleLabel={missingBirken ? 'Retry Birkenbihl' : 'Recalculate Birkenbihl'}
         onPress={onRetryBirkenbihl}
-        disabled={birkenbihlBusy}
-        accessibilityRole="button"
-        accessibilityLabel={missingBirken ? 'Retry Birkenbihl' : 'Recalculate Birkenbihl'}
-        accessibilityState={{ disabled: Boolean(birkenbihlBusy), busy: Boolean(birkenbihlBusy) }}
-        style={{ marginTop: 8, opacity: birkenbihlBusy ? 0.6 : 1 }}
-      >
-        <Text
-          style={{
-            color: retryTint,
-            fontWeight: '700',
-            fontSize: 12,
-          }}
-        >
-          {birkenbihlBusy ? 'Recalculating…' : missingBirken ? 'Retry Birkenbihl' : 'Recalculate Birkenbihl'}
-        </Text>
-      </Pressable>
+        accessibilityLabel={
+          birkenbihlBusy
+            ? 'Recalculating Birkenbihl'
+            : missingBirken
+              ? 'Retry Birkenbihl'
+              : 'Recalculate Birkenbihl'
+        }
+      />
+    ) : null;
+  const sendStatus =
+    sendBusy && !deleted ? (
+      <BusyHint tint={retryTint} label="Sending…" />
+    ) : translating && !failed && !deleted && !translationRetryBusy && !showTranslationRetry ? (
+      <BusyHint tint={retryTint} label="Translating…" />
     ) : null;
   const tombstoneColor =
     mine && kind === 'user' && !failed ? 'rgba(255,255,255,0.88)' : colors.textMuted;
@@ -620,6 +637,7 @@ export function MessageBubble({
     <>
       {mediaBlock}
       {body}
+      {sendStatus}
       {translationRetry}
       {birkenRetry}
     </>
@@ -634,6 +652,7 @@ export function MessageBubble({
                 event.preventDefault();
                 onRequestDelete();
               },
+              tabIndex: -1,
             }
           : {}),
       }
@@ -641,12 +660,10 @@ export function MessageBubble({
 
   if (mine && kind === 'user') {
     return (
-      <Pressable
+      <MessageBubbleHost
         style={[styles.bubbleOuter, { alignSelf }]}
-        accessibilityRole="button"
-        accessibilityLabel={deleted ? 'Deleted message actions' : 'Message actions'}
-        accessibilityHint="Long press to delete"
-        {...gestureProps}
+        canDelete={Boolean(onRequestDelete)}
+        gestureProps={gestureProps}
       >
         <LinearGradient
           colors={failed ? [pack.tokens.wine, pack.tokens.failedDeep] : [...pack.gradients.bubbleOut]}
@@ -655,35 +672,36 @@ export function MessageBubble({
           style={[styles.bubble, styles.bubbleMine, failed && styles.bubbleFailed]}
         >
           {inner}
-          {receipt && !failed && !deleted ? (
+          {receipt && !failed && !deleted && !sendBusy && !translating ? (
             <Text style={[styles.receipt, { color: 'rgba(255,255,255,0.85)' }]} accessibilityLabel={receipt}>
               {receiptGlyph(receipt)}
             </Text>
           ) : null}
           {failed && !deleted ? (
-            <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry send">
-              <Text style={styles.failCopy}>{errorCopy ?? "Couldn't send. Tap to retry."}</Text>
-            </Pressable>
+            <RetryAction
+              tint="#FFE8E0"
+              busy={false}
+              busyLabel="Sending…"
+              idleLabel={errorCopy ?? "Couldn't send. Tap to retry."}
+              onPress={onRetry}
+              accessibilityLabel="Retry send"
+            />
           ) : null}
         </LinearGradient>
-      </Pressable>
+      </MessageBubbleHost>
     );
   }
 
   const bg = kind === 'ai' ? colors.bubbleAi : colors.bubbleIncoming;
   return (
-    <Pressable
+    <MessageBubbleHost
       style={[
         styles.bubble,
         styles.bubbleOther,
         { backgroundColor: bg, alignSelf, borderColor: colors.border },
       ]}
-      accessibilityRole="button"
-      accessibilityLabel={
-        deleted ? 'Deleted message actions' : kind === 'ai' ? 'AI message actions' : 'Partner message actions'
-      }
-      accessibilityHint="Long press to delete"
-      {...gestureProps}
+      canDelete={Boolean(onRequestDelete)}
+      gestureProps={gestureProps}
     >
       {kind === 'ai' && !deleted ? (
         <View style={styles.aiHeader}>
@@ -694,12 +712,40 @@ export function MessageBubble({
       ) : null}
       {inner}
       {failed && !deleted ? (
-        <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel="Retry send">
-          <Text style={{ color: colors.danger, marginTop: 6, fontWeight: '600' }}>
-            {errorCopy ?? 'Retry'}
-          </Text>
-        </Pressable>
+        <RetryAction
+          tint={colors.danger}
+          busy={false}
+          busyLabel="Sending…"
+          idleLabel={errorCopy ?? 'Retry'}
+          onPress={onRetry}
+          accessibilityLabel="Retry send"
+        />
       ) : null}
+    </MessageBubbleHost>
+  );
+}
+
+/**
+ * Long-press / right-click host for delete. Must not be a web <button> — Retry and
+ * Birkenbihl token taps already are, and nested buttons are invalid HTML.
+ */
+function MessageBubbleHost({
+  style,
+  canDelete,
+  gestureProps,
+  children,
+}: {
+  style: StyleProp<ViewStyle>;
+  canDelete: boolean;
+  gestureProps: object;
+  children: React.ReactNode;
+}) {
+  if (!canDelete) {
+    return <View style={style}>{children}</View>;
+  }
+  return (
+    <Pressable accessibilityRole="none" style={style} {...gestureProps}>
+      {children}
     </Pressable>
   );
 }
@@ -1371,6 +1417,7 @@ export function ThreadInlineChatSettings({
             accessibilityLabel="Recalculate Birkenbihl"
             accessibilityState={{ disabled: Boolean(birkenbihlBusy), busy: Boolean(birkenbihlBusy) }}
           >
+            {birkenbihlBusy ? <ActivityIndicator size="small" color={colors.text} /> : null}
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: 12 }}>
               {birkenbihlBusy ? 'Recalculating…' : 'Recalculate Birkenbihl'}
             </Text>
@@ -1568,6 +1615,7 @@ export function ChatSettingsSheet({
               accessibilityLabel="Recalculate Birkenbihl"
               accessibilityState={{ disabled: Boolean(birkenbihlBusy), busy: Boolean(birkenbihlBusy) }}
             >
+              {birkenbihlBusy ? <ActivityIndicator size="small" color={colors.text} /> : null}
               <Text style={{ color: colors.text, fontWeight: '700' }}>
                 {birkenbihlBusy ? 'Recalculating…' : 'Recalculate Birkenbihl'}
               </Text>
@@ -1730,11 +1778,183 @@ export function InboxRow({
 }
 
 export function InboxSkeleton({ colors }: { colors: ThemeColors }) {
+  const opacity = useSkeletonPulse();
   return (
-    <View style={{ paddingTop: 12 }}>
+    <View
+      accessibilityRole="text"
+      accessibilityLabel="Loading chats"
+      accessibilityState={{ busy: true }}
+      style={{ paddingTop: 12 }}
+    >
       {[0, 1, 2, 3].map((i) => (
-        <View key={i} style={[styles.skeletonRow, { backgroundColor: colors.accentSoft }]} />
+        <View key={i} style={styles.skeletonInboxRow}>
+          <Animated.View
+            style={[styles.skeletonAvatar, { backgroundColor: colors.accentSoft, opacity }]}
+          />
+          <View style={{ flex: 1, gap: 8, justifyContent: 'center' }}>
+            <SkeletonBar colors={colors} opacity={opacity} width={i % 2 === 0 ? '44%' : '36%'} height={14} />
+            <SkeletonBar colors={colors} opacity={opacity} width={i % 2 === 0 ? '78%' : '62%'} height={11} />
+          </View>
+        </View>
       ))}
+    </View>
+  );
+}
+
+const THREAD_SKELETON: Array<{ mine: boolean; widths: Array<`${number}%`> }> = [
+  { mine: false, widths: ['72%', '54%'] },
+  { mine: true, widths: ['48%', '64%', '32%'] },
+  { mine: false, widths: ['66%'] },
+  { mine: true, widths: ['58%', '40%'] },
+  { mine: false, widths: ['70%', '52%', '28%'] },
+];
+
+/** Placeholder message lines while cloud hydrate / listMessages is in flight. */
+export function ThreadMessageSkeleton({ colors }: { colors: ThemeColors }) {
+  const opacity = useSkeletonPulse();
+  return (
+    <View
+      accessibilityRole="text"
+      accessibilityLabel="Loading messages"
+      accessibilityState={{ busy: true }}
+      style={styles.skeletonThread}
+    >
+      {THREAD_SKELETON.map((row, index) => (
+        <View
+          key={index}
+          style={[styles.skeletonBubbleWrap, { alignItems: row.mine ? 'flex-end' : 'flex-start' }]}
+        >
+          <View
+            style={[
+              styles.skeletonBubble,
+              {
+                backgroundColor: row.mine ? colors.accentSoft : colors.surface,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            {row.widths.map((width, line) => (
+              <SkeletonBar
+                key={line}
+                colors={colors}
+                opacity={opacity}
+                width={width}
+                height={line === 0 ? 13 : 11}
+              />
+            ))}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function useSkeletonPulse() {
+  const opacity = useRef(new Animated.Value(0.42)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.88, duration: 720, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 720, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return opacity;
+}
+
+function SkeletonBar({
+  colors,
+  opacity,
+  width,
+  height,
+  color,
+}: {
+  colors: ThemeColors;
+  opacity: Animated.Value;
+  width: `${number}%`;
+  height: number;
+  color?: string;
+}) {
+  return (
+    <Animated.View
+      style={{
+        height,
+        width,
+        borderRadius: 6,
+        backgroundColor: color ?? colors.textMuted,
+        opacity,
+      }}
+    />
+  );
+}
+
+function LineBusyBars({ colors, onAccent }: { colors: ThemeColors; onAccent?: boolean }) {
+  const opacity = useSkeletonPulse();
+  const barColor = onAccent ? 'rgba(255,255,255,0.5)' : colors.textMuted;
+  return (
+    <View
+      accessibilityRole="text"
+      accessibilityLabel="Loading translation"
+      accessibilityState={{ busy: true }}
+      style={styles.lineBusyBars}
+    >
+      <SkeletonBar colors={colors} opacity={opacity} width="78%" height={11} color={barColor} />
+      <SkeletonBar colors={colors} opacity={opacity} width="52%" height={11} color={barColor} />
+    </View>
+  );
+}
+
+function RetryAction({
+  tint,
+  busy,
+  busyLabel,
+  idleLabel,
+  why,
+  onPress,
+  accessibilityLabel,
+}: {
+  tint: string;
+  busy: boolean;
+  busyLabel: string;
+  idleLabel: string;
+  why?: string;
+  onPress?: () => void;
+  accessibilityLabel: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={busy || !onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled: busy || !onPress, busy }}
+      style={styles.retryHit}
+    >
+      {busy ? (
+        <ActivityIndicator size="small" color={tint} />
+      ) : (
+        <Ionicons name="refresh" size={14} color={tint} />
+      )}
+      <Text style={[styles.retryLabel, { color: tint }]}>{busy ? busyLabel : idleLabel}</Text>
+      {why && !busy ? (
+        <Text style={[styles.retryWhy, { color: tint }]}>{why}</Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function BusyHint({ tint, label }: { tint: string; label: string }) {
+  return (
+    <View
+      accessibilityRole="text"
+      accessibilityLabel={label}
+      accessibilityState={{ busy: true }}
+      style={styles.retryHit}
+    >
+      <ActivityIndicator size="small" color={tint} />
+      <Text style={[styles.retryLabel, { color: tint }]}>{label}</Text>
     </View>
   );
 }
@@ -2133,6 +2353,7 @@ const styles = StyleSheet.create({
   },
   retryLabel: { fontWeight: '800', fontSize: 13 },
   retryWhy: { fontWeight: '600', fontSize: 11, opacity: 0.9 },
+  lineBusyBars: { gap: 6, marginTop: 6 },
   interlinearRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   interlinearSegment: { marginRight: 4 },
   bubbleOuter: { maxWidth: '88%', marginVertical: 5 },
@@ -2199,6 +2420,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
   settingsBlock: { gap: 4 },
   settingsLabel: {
@@ -2293,12 +2515,36 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     gap: 2,
   },
-  skeletonRow: {
-    height: 72,
-    marginHorizontal: 16,
-    marginVertical: 6,
-    borderRadius: 18,
-    opacity: 0.55,
+  skeletonInboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  skeletonAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+  },
+  skeletonThread: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 14,
+  },
+  skeletonBubbleWrap: {
+    width: '100%',
+  },
+  skeletonBubble: {
+    maxWidth: '78%',
+    minWidth: 120,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 8,
   },
 });
 
