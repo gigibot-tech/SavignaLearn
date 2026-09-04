@@ -1,13 +1,16 @@
 import FontAwesome from '@expo/vector-icons/FontAwesome';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFonts } from 'expo-font';
 import { Stack, router, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import 'react-native-reanimated';
 
 import { ensureLearningBotChat } from '@/adapters/chat';
 import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
 import { learningBotHref, needsPostLoginBotRedirect } from '@/adapters/postLogin';
+import { iconFontFamilyNames, iconFontsForWeb, waitForWebIconFonts } from '@/adapters/webFonts';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AppProviders, useAuthState, useServices } from '@/features/chat/AppProviders';
 import { AuthGate } from '@/features/chat/AuthGate';
@@ -25,20 +28,33 @@ export const unstable_settings = {
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
+  const [fontsLoaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
+    ...iconFontsForWeb(FontAwesome.font),
+    ...iconFontsForWeb(Ionicons.font),
   });
+  const [iconsReady, setIconsReady] = useState(Platform.OS !== 'web');
 
   useEffect(() => {
     if (error) throw error;
   }, [error]);
 
   useEffect(() => {
-    if (loaded) SplashScreen.hideAsync();
-  }, [loaded]);
+    if (!fontsLoaded) return;
+    let cancelled = false;
+    void waitForWebIconFonts(iconFontFamilyNames([FontAwesome.font, Ionicons.font])).then(() => {
+      if (!cancelled) setIconsReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fontsLoaded]);
 
-  if (!loaded) return null;
+  useEffect(() => {
+    if (fontsLoaded && iconsReady) SplashScreen.hideAsync();
+  }, [fontsLoaded, iconsReady]);
+
+  if (!fontsLoaded || !iconsReady) return null;
 
   return (
     <AppProviders>
@@ -89,8 +105,6 @@ function RootLayoutNav() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="u/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
     </Stack>
   );

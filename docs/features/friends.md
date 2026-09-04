@@ -1,6 +1,6 @@
 # Friends
 
-Chat + friends only (no meetups). Desktop uses a **collapsible** side column: collapsed icon rail by default; **top-left menu** expands Chats / Friends / Settings + lists. Picking a **chat**, **friend name → profile**, **Chat**, or **Settings** collapses the panel again. Mobile uses the same three tabs. Chat connection, languages, and bot replies live in the **thread header** (sliders sheet below 1024px; inline chips at L/XL).
+Chat + friends only (no meetups). Desktop uses a **collapsible** side column: collapsed icon rail by default; the rail’s **menu** expands Chats / Friends / Settings + lists. Picking a **chat**, **friend name → profile**, **Chat**, or **Settings** collapses the panel again. **Chats / Friends / Settings tabs stay on screen** on every main screen, including a thread and a profile. Thread header **back** returns to the previous screen (or Chats). Chat connection, languages, and bot replies live in the **thread header** (sliders sheet below 1024px; inline chips at L/XL).
 
 ## Add a friend
 

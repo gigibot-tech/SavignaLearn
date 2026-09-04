@@ -24,6 +24,14 @@ export default function Root({ children }: { children: ReactNode }) {
         <link rel="manifest" href="/manifest.json" />
         <link rel="icon" href="/icon.png" />
         <link rel="apple-touch-icon" href="/icon.png" />
+        <link rel="preload" href="/fonts/ionicons.ttf" as="font" type="font/ttf" crossOrigin="anonymous" />
+        <link
+          rel="preload"
+          href="/fonts/FontAwesome.ttf"
+          as="font"
+          type="font/ttf"
+          crossOrigin="anonymous"
+        />
         <ScrollViewStyleReset />
         <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
       </head>
@@ -33,6 +41,20 @@ export default function Root({ children }: { children: ReactNode }) {
 }
 
 const responsiveBackground = `
+@font-face {
+  font-family: ionicons;
+  src: url("/fonts/ionicons.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: FontAwesome;
+  src: url("/fonts/FontAwesome.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
 body {
   background-color: #FFF5F8;
 }

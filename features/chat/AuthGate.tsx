@@ -37,9 +37,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setBootstrapping(false);
   };
 
+  const authEdges = ['top', 'left', 'right', 'bottom'] as const;
+
   if (!ready) {
     return (
-      <GradientScreen scheme={scheme}>
+      <GradientScreen scheme={scheme} edges={[...authEdges]}>
         <InboxSkeleton colors={colors} />
       </GradientScreen>
     );
@@ -47,7 +49,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return (
-      <GradientScreen scheme={scheme}>
+      <GradientScreen scheme={scheme} edges={[...authEdges]}>
         <AlphaNotice colors={colors} />
         <AuthHero
           colors={colors}
@@ -61,7 +63,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (bootstrapping) {
     return (
-      <GradientScreen scheme={scheme}>
+      <GradientScreen scheme={scheme} edges={[...authEdges]}>
         <InboxSkeleton colors={colors} />
       </GradientScreen>
     );

@@ -188,9 +188,18 @@ export function ProfileScreen() {
   };
 
   return (
-    <GradientScreen scheme={scheme} edges={['top', 'left', 'right', 'bottom']}>
+    <GradientScreen scheme={scheme} edges={['top', 'left', 'right']}>
       <View style={[styles.top, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back" hitSlop={12}>
+        <Pressable
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          hitSlop={12}
+          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+        >
           <Ionicons name="chevron-back" size={24} color={colors.accent} />
         </Pressable>
         <Text style={[styles.topTitle, { color: colors.text }]} numberOfLines={1}>

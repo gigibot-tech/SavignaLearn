@@ -359,7 +359,6 @@ export function ThreadScreen() {
   const threadUserId = user ? chatPersistenceUserId(user) : 'anon';
   const { showNotification } = useNotifications();
   const wideChrome = useWideChatChrome();
-  const { desktop, expandSidebar, sidebarExpanded } = useAppShell();
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<SourceMessage[]>([]);
@@ -1147,18 +1146,20 @@ export function ThreadScreen() {
   };
 
   return (
-    <GradientScreen scheme={scheme} edges={['top', 'left', 'right', 'bottom']}>
+    <GradientScreen scheme={scheme} edges={['top', 'left', 'right']}>
       <ThreadChromeHeader
         title={conversationTitleFor(conversation, selfIds, LEARNING_BOT_DISPLAY_NAME)}
         subtitle={presenceLabel || undefined}
         pipelineLabel={wideChrome ? undefined : pipelineLabel}
-        onBack={
-          desktop
-            ? () => (sidebarExpanded ? router.back() : expandSidebar())
-            : () => router.back()
-        }
-        leadingIcon={desktop && !sidebarExpanded ? 'menu' : 'chevron-back'}
-        leadingLabel={desktop && !sidebarExpanded ? 'Open sidebar' : 'Back'}
+        onBack={() => {
+          if (router.canGoBack()) {
+            router.back();
+            return;
+          }
+          router.replace('/');
+        }}
+        leadingIcon="chevron-back"
+        leadingLabel="Back to chats"
         onOpenSettings={wideChrome ? undefined : () => setSettingsOpen(true)}
         inlineSettings={wideChrome ? <ThreadInlineChatSettings {...chatSettings} /> : undefined}
         colors={colors}

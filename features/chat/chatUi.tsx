@@ -195,7 +195,6 @@ export function ThreadChromeHeader({
   scheme?: 'light' | 'dark' | null;
   isBot?: boolean;
   photoUrl?: string | null;
-  /** Desktop collapsed sidebar: use menu to expand chats/friends. */
   leadingIcon?: React.ComponentProps<typeof Ionicons>['name'];
   leadingLabel?: string;
   onOpenProfile?: () => void;
@@ -215,6 +214,7 @@ export function ThreadChromeHeader({
       >
         <Pressable
           onPress={onBack}
+          accessibilityRole="button"
           accessibilityLabel={leadingLabel}
           hitSlop={12}
           style={shell.backHit}
@@ -2175,7 +2175,13 @@ const shell = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backHit: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  backHit: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
   headerAvatar: {
     width: 32,
     height: 32,

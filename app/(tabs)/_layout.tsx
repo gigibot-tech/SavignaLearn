@@ -1,11 +1,15 @@
 import React from 'react';
-import { StyleSheet, useWindowDimensions } from 'react-native';
+import { StyleSheet } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 import { useColorScheme } from '@/components/useColorScheme';
 import { badgeLabel } from '@/domain/unread';
-import { DESKTOP_BREAKPOINT, useAppShell } from '@/features/shell/AppShell';
+import { useAppShell } from '@/features/shell/AppShell';
 import { useAppearance } from '@/features/shell/AppearanceProvider';
+
+export const unstable_settings = {
+  initialRouteName: '(home)',
+};
 
 function TabBarIcon(props: { name: React.ComponentProps<typeof FontAwesome>['name']; color: string }) {
   return <FontAwesome size={22} style={{ marginBottom: -2 }} {...props} />;
@@ -15,8 +19,6 @@ export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { pack } = useAppearance();
   const colors = colorScheme === 'dark' ? pack.dark : pack.light;
-  const { width } = useWindowDimensions();
-  const desktop = width >= DESKTOP_BREAKPOINT;
   const { unread, incoming } = useAppShell();
 
   return (
@@ -24,18 +26,17 @@ export default function TabLayout() {
       screenOptions={{
         tabBarActiveTintColor: colors.tabIconSelected,
         tabBarInactiveTintColor: colors.tabIconDefault,
-        tabBarStyle: desktop
-          ? { display: 'none' }
-          : {
-              backgroundColor: colors.headerGlass,
-              borderTopColor: colors.border,
-              borderTopWidth: StyleSheet.hairlineWidth,
-            },
+        tabBarHideOnKeyboard: false,
+        tabBarStyle: {
+          backgroundColor: colors.headerGlass,
+          borderTopColor: colors.border,
+          borderTopWidth: StyleSheet.hairlineWidth,
+        },
         headerShown: false,
       }}
     >
       <Tabs.Screen
-        name="index"
+        name="(home)"
         options={{
           title: 'Chats',
           tabBarBadge: badgeLabel(unread),

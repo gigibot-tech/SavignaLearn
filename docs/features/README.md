@@ -2,7 +2,7 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Chat (inbox + thread) | MVP | Line + Birkenbihl. Compact: header sliders → chat sheet. ≥1024: this-chat chips in the thread header. Sidebar/tab **Settings** is app-wide. |
+| Chat (inbox + thread) | MVP | Line + Birkenbihl. Compact: header sliders → chat sheet. ≥1024: this-chat chips in the thread header. **Chats / Friends / Settings tabs stay on screen during a thread** (and on profile). Sidebar/tab **Settings** is app-wide. |
 | Chat persistence | MVP | See `chat-persistence.md` (human DMs share one `dm:` id on savigna_*; Bot stays local) |
 | Message delete | MVP | WhatsApp-like delete for me / delete for everyone. See `message-delete.md` |
 | Friends | MVP | See `friends.md` (email required; dual-directory existence; inconsistent + delete; demo mutual learner ↔ icestormfroste) |
