@@ -12,7 +12,7 @@ import { clampProfileBio, PROFILE_BIO_MAX } from '@/domain';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { GlassPanel } from '@/features/chat/chatUi';
 import { PersonAvatar } from '@/features/chat/avatars';
-import { HiddenImageFileInput } from '@/features/chat/composerMedia';
+import { HiddenImageFileInput } from '@/features/chat/Composer';
 import { useOwnProfileQuery } from '@/features/query/useChatQueries';
 import { queryKeys } from '@/features/query/queryKeys';
 import { useQueryClient } from '@tanstack/react-query';

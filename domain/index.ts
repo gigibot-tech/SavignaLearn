@@ -53,12 +53,20 @@ export {
   mergeMessageTimelines,
 } from './chat';
 
+export type { InboxFilter, InboxItem } from './inbox';
 export {
+  INBOX_FILTERS,
   badgeLabel,
+  chatDayLabel,
+  filterInboxItems,
+  inboxGridColumns,
+  inboxTimestamp,
+  messageClockTime,
+  sameChatDay,
   shouldCountAsUnread,
   unreadRecipients,
   unreadTotal,
-} from './unread';
+} from './inbox';
 export type { ConversationProfileStats } from './profileStats';
 export { conversationProfileStats } from './profileStats';
 
@@ -114,6 +122,7 @@ export {
   parseWhatsAppTranscript,
   guessSelfSpeaker,
   guessPartner,
+  partnerCandidatesFromFriends,
   messagesForSpeakers,
   localWhatsAppPartnerId,
 } from './whatsappImport';

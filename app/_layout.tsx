@@ -9,7 +9,7 @@ import 'react-native-reanimated';
 
 import { ensureLearningBotChat } from '@/adapters/chat';
 import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
-import { learningBotHref, needsPostLoginBotRedirect } from '@/adapters/postLogin';
+import { chatHref, needsPostLoginBotRedirect } from '@/adapters/postLogin';
 import { iconFontFamilyNames, iconFontsForWeb, waitForWebIconFonts } from '@/adapters/webFonts';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AppProviders, useAuthState, useServices } from '@/features/chat/AppProviders';
@@ -86,7 +86,7 @@ function RootLayoutNav() {
       const id = await ensureLearningBotChat(chat, chatPersistenceUserId(user), chatActorIds(user));
       if (cancelled) return;
       if (needsPostLoginBotRedirect(pathname, id)) {
-        router.replace(learningBotHref(id));
+        router.replace(chatHref(id));
       }
       clearJustSignedIn();
     })();

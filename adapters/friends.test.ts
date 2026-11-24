@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Conversation } from '@/domain/chat';
-import { LEARNING_BOT_USER_ID } from '@/domain/chat';
+import { LEARNING_BOT_DISPLAY_NAME, LEARNING_BOT_USER_ID } from '@/domain/chat';
 import {
   DEMO_LEARNER_ID,
   FriendRequestFailed,
@@ -17,6 +17,7 @@ import type { ChatRepository } from '@/ports/ports';
 import {
   findOrCreateDirectChat,
   InMemoryFriendsRepository,
+  threadChromeTitle,
   usernameFromUser,
 } from './friends';
 import { InMemoryUserDirectory } from './userDirectory';
@@ -400,5 +401,48 @@ describe('findOrCreateDirectChat', () => {
     );
     expect(fromLearn.id).toBe(fromIce.id);
     expect(fromLearn.id.startsWith('dm:')).toBe(true);
+  });
+});
+
+describe('threadChromeTitle', () => {
+  function conv(id: string, title: string, participantIds: string[]): Conversation {
+    return {
+      id,
+      title,
+      participantIds,
+      participants: participantIds.map((userId) => ({
+        userId,
+        nativeLang: 'en',
+        learningLang: 'de',
+      })),
+      aiEnabled: participantIds.includes(LEARNING_BOT_USER_ID),
+      updatedAt: new Date().toISOString(),
+      unreadCount: 0,
+    };
+  }
+
+  it('does not keep Bot while a friend thread is loading', () => {
+    const bot = conv('demo-1', LEARNING_BOT_DISPLAY_NAME, ['me', LEARNING_BOT_USER_ID]);
+    const mira = conv('dm:me:mira', 'Mira', ['me', 'mira']);
+    expect(
+      threadChromeTitle({
+        conversation: bot,
+        inbox: [bot, mira],
+        conversationId: 'dm:me:mira',
+        viewerIds: ['me'],
+      })
+    ).toBe('Mira');
+  });
+
+  it('uses Chat when the next thread is not in inbox yet', () => {
+    const bot = conv('demo-1', LEARNING_BOT_DISPLAY_NAME, ['me', LEARNING_BOT_USER_ID]);
+    expect(
+      threadChromeTitle({
+        conversation: bot,
+        inbox: [bot],
+        conversationId: 'dm:me:mira',
+        viewerIds: ['me'],
+      })
+    ).toBe('Chat');
   });
 });

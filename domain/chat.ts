@@ -615,7 +615,7 @@ export function renderViewpoint(
       );
       return {
         learningText: sourceText,
-        nativeText: showNative ? second : '',
+        nativeText: showNative && second ? second : '',
         sourceText,
         lineIndex,
         birkenbihl,

@@ -194,6 +194,18 @@ export type PartnerCandidate = {
   email: string;
 };
 
+/** Friends are keyed by `userId`; the matcher calls the same thing `id`. */
+export function partnerCandidatesFromFriends(
+  rows: ReadonlyArray<{ userId: string; username: string; displayName: string; email: string }>
+): PartnerCandidate[] {
+  return rows.map((row) => ({
+    id: row.userId,
+    username: row.username,
+    displayName: row.displayName,
+    email: row.email,
+  }));
+}
+
 export function guessPartner(
   speaker: string | null,
   candidates: PartnerCandidate[]

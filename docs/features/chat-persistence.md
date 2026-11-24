@@ -10,7 +10,7 @@ A DM written only to the stub id is still migrated onto icestorm’s live id on 
 
 Actor ids: hydrate and list **both** `user.id` and `user.idoUserId` so an older local snapshot is not abandoned after mixed auth. One **Bot** thread is shown even if ensure ran in parallel.
 
-Opening a thread shows pulsing **text-line skeletons** until local hydrate + cloud `listMessages` finish (`ThreadMessageSkeleton`). Inbox / auth boot uses the same text-bar `InboxSkeleton`. Inbox, friends, and thread **reads** go through TanStack Query (`features/query`) so the sidebar and chats home share one cache and switching back to a thread can reuse the last snapshot. Send / translation retries stay local mutations.
+Opening a thread shows pulsing **text-line skeletons** until local hydrate + cloud `listMessages` finish (`ThreadMessageSkeleton`). Inbox / auth boot shows a tile-shaped `InboxSkeleton` that matches the grid. Inbox, friends, and thread **reads** go through TanStack Query (`features/query`) so the desktop chat pane and chats home share one cache and switching back to a thread can reuse the last snapshot. Send / translation retries stay local mutations.
 
 ## Pattern
 

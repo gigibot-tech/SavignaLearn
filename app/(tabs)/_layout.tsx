@@ -3,7 +3,7 @@ import { StyleSheet } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Tabs } from 'expo-router';
 import { useColorScheme } from '@/components/useColorScheme';
-import { badgeLabel } from '@/domain/unread';
+import { badgeLabel } from '@/domain/inbox';
 import { useAppShell } from '@/features/shell/AppShell';
 import { useAppearance } from '@/features/shell/AppearanceProvider';
 
@@ -19,7 +19,7 @@ export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { pack } = useAppearance();
   const colors = colorScheme === 'dark' ? pack.dark : pack.light;
-  const { unread, incoming } = useAppShell();
+  const { desktop, unread, incoming } = useAppShell();
 
   return (
     <Tabs
@@ -27,11 +27,14 @@ export default function TabLayout() {
         tabBarActiveTintColor: colors.tabIconSelected,
         tabBarInactiveTintColor: colors.tabIconDefault,
         tabBarHideOnKeyboard: false,
-        tabBarStyle: {
-          backgroundColor: colors.headerGlass,
-          borderTopColor: colors.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-        },
+        // Desktop navigates with the shell's rail; a second bar at the bottom would duplicate it.
+        tabBarStyle: desktop
+          ? { display: 'none' }
+          : {
+              backgroundColor: colors.headerGlass,
+              borderTopColor: colors.border,
+              borderTopWidth: StyleSheet.hairlineWidth,
+            },
         headerShown: false,
       }}
     >

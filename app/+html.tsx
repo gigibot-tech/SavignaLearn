@@ -57,6 +57,8 @@ const responsiveBackground = `
 }
 body {
   background-color: #FFF5F8;
+  /* Native form controls (the message <textarea>) do not inherit a font by default and fall back to serif. */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   body {

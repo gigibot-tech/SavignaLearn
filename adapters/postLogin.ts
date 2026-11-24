@@ -4,7 +4,7 @@
  * opens SavignasBoi instead of that stale screen or the invite empty-home.
  */
 
-export function learningBotHref(conversationId: string): `/chat/${string}` {
+export function chatHref(conversationId: string): `/chat/${string}` {
   return `/chat/${conversationId}`;
 }
 
@@ -19,7 +19,7 @@ export function routeParam(value: string | string[] | undefined, fallback: strin
 }
 
 export function needsPostLoginBotRedirect(pathname: string, conversationId: string): boolean {
-  if (pathname === learningBotHref(conversationId)) return false;
+  if (pathname === chatHref(conversationId)) return false;
   if (pathname.startsWith('/u/')) return false;
   return true;
 }

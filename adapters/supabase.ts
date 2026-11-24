@@ -14,7 +14,7 @@ import type {
 } from '@/domain/chat';
 import { conversationPreviewFor, DELETED_FOR_EVERYONE_COPY, mediaKindOf } from '@/domain/chat';
 import { canDeleteForEveryone, previewAfterDelete, tombstoneMessage } from '@/domain/messageDelete';
-import { unreadRecipients } from '@/domain/unread';
+import { unreadRecipients } from '@/domain/inbox';
 import type { AuthPort, AuthUser, ChatContentCipher, ChatRepository } from '@/ports/ports';
 import { MixedAuthAdapter, isMixedIdentityConfigured } from '@/adapters/mixedAuth';
 import { supabaseAuthClientOptions } from '@/adapters/supabaseClientOptions';

@@ -14,7 +14,7 @@ Tap a friend’s **name** (or the thread header avatar / title) to open `/u/<use
 
 SavignasBoi has a profile (practice stats, always **online**) but no delete-friend action.
 
-The same photo and last-seen state appear on the inbox green dot, thread header subtitle, friends list, and desktop sidebar. Tapping the sidebar name/photo opens Settings.
+The same photo and last-seen state appear on the inbox green dot, thread header subtitle, friends list, and desktop rail. Tapping your photo at the bottom of the rail opens Settings.
 
 Deep link: `/u/<userId>` or `/u/<userId>?chat=<conversationId>`. After login, a `/u/…` URL is kept (not bounced to the bot thread).
 

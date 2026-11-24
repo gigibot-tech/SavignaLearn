@@ -11,7 +11,7 @@ Format:
 
 ## Flow
 
-1. **Import WhatsApp** on Chats (inbox, desktop pick-a-chat, sidebar) or Friends.
+1. **Import WhatsApp** at the bottom of the chat list (phone inbox and desktop pane) or on Friends.
 2. Paste the transcript and tap **Read names**.
 3. Pick **I am** / **They are** — the two names before `:`.
 4. Guess uses substring / similar match against your email, username, and display name (so `Andrea` matches `andrearachetta@…`, `Savi(g)na` matches `Savigna`). If the scores are close or weak, you choose.

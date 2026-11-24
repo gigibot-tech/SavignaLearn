@@ -1,6 +1,6 @@
 # Alpha notice
 
-SavignaLearn is in **alpha**. Every learner sees the same warning on **sign-in** and on **chats home** (empty home, inbox list, and desktop “Pick a chat”).
+SavignaLearn is in **alpha**. Every learner sees the same warning on **sign-in** and in **Settings**. It is deliberately *not* on chats home, so the first screen is all conversations.
 
 ## Copy (SSOT)
 
@@ -8,6 +8,6 @@ SavignaLearn is in **alpha**. Every learner sees the same warning on **sign-in**
 
 ## UI
 
-`AlphaNotice` (`features/alpha/AlphaNotice.tsx`) is the reusable banner. Pass theme `colors`; use `compact` on the inbox list.
+`AlphaNotice` (`features/alpha/AlphaNotice.tsx`) is the reusable banner. Pass theme `colors`; `compact` is available for tight spaces.
 
 It is not dismissible. Texts and chats may not last — screenshot what you want to keep.

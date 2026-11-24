@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 
 import { listInboxConversations, ensureLearningBotChat } from '@/adapters/chat';
 import { chatActorIds, chatPersistenceUserId } from '@/adapters/identity';
-import { learningBotHref } from '@/adapters/postLogin';
+import { chatHref } from '@/adapters/postLogin';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 
 import { loadNotificationPrefs, saveNotificationPrefs, type NotificationPrefs } from './notificationPrefs';
@@ -123,11 +123,14 @@ async function notifyNative(req: NotificationRequest): Promise<boolean> {
   const status = await ExpoNotifications.getPermissionsAsync().catch(() => null);
   if (!status || status.granted !== true) return false;
 
-  // `data` must be under `content.data` for click handling.
-  await ExpoNotifications.presentNotificationAsync({
-    title: req.title,
-    body: req.body,
-    data: { url: req.url, ...(req.data ?? {}) },
+  // A null trigger presents immediately. `data` must be under `content.data` for click handling.
+  await ExpoNotifications.scheduleNotificationAsync({
+    content: {
+      title: req.title,
+      body: req.body,
+      data: { url: req.url, ...(req.data ?? {}) },
+    },
+    trigger: null,
   });
   return true;
 }
@@ -231,7 +234,8 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     // Native: default handler shows alerts.
     ExpoNotifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
         shouldPlaySound: false,
         shouldSetBadge: false,
       }),
@@ -362,7 +366,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
 
           const firstLine = (last.sourceText ?? '').split('\n').find((s) => s.trim().length > 0) ?? '';
           const preview = firstLine.trim().slice(0, 140) || 'New message';
-          const url = learningBotHref(conversationId);
+          const url = chatHref(conversationId);
 
           void showNotification({
             title: conv.title ?? 'New message',

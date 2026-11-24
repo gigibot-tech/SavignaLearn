@@ -165,6 +165,8 @@ export interface LearningItemRepository {
   ): Promise<LearningItem | null>;
   listBySource(source: LearningSource): Promise<LearningItem[]>;
   listForUser(userId: string): Promise<LearningItem[]>;
+  /** Optional: repositories that can notify (the in-memory one does) let the UI refresh itself. */
+  subscribe?(listener: () => void): () => void;
 }
 
 /** LONG-TERM: Gigolingo media library. Unused in MVP on purpose. */

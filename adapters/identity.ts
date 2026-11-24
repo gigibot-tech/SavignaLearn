@@ -40,7 +40,7 @@ export function chatHydrateAliasIds(
   const ids = new Set(chatActorIds(user));
   const hints = [
     { id: user.id, email: user.email, username: user.displayName },
-    { id: user.idoUserId, email: user.email, username: user.displayName },
+    { id: user.idoUserId ?? undefined, email: user.email, username: user.displayName },
   ];
   if (hints.some((hint) => isIcestormIdentity(hint))) {
     ids.add(ICESTORM_PROFILE_ID);

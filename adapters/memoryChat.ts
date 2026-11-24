@@ -16,7 +16,7 @@ import {
   previewAfterDelete,
   tombstoneMessage,
 } from '@/domain/messageDelete';
-import { unreadRecipients } from '@/domain/unread';
+import { unreadRecipients } from '@/domain/inbox';
 import type { ChatRepository } from '@/ports/ports';
 import {
   applySnapshot,
@@ -461,5 +461,67 @@ export class InMemoryChatRepository implements ChatRepository {
       );
       await this.kv.setItem(chatStorageKey(userId), JSON.stringify(snapshot));
     }
+  }
+}
+
+const DEMO_PARTNERS: ReadonlyArray<{
+  id: string;
+  name: string;
+  lang: string;
+  text: string;
+  english: string;
+  minutesAgo: number;
+  unread: boolean;
+}> = [
+  { id: 'friend-mira', name: 'Mira', lang: 'de', text: 'Guten Morgen! Hast du gut geschlafen?', english: 'Good morning! Did you sleep well?', minutesAgo: 4, unread: true },
+  { id: 'demo-sofia', name: 'Sofia', lang: 'es', text: '¿Practicamos español esta noche?', english: 'Shall we practise Spanish tonight?', minutesAgo: 38, unread: true },
+  { id: 'demo-yuki', name: 'Yuki', lang: 'ja', text: 'ありがとう、また明日ね！', english: 'Thank you, see you tomorrow!', minutesAgo: 190, unread: false },
+  { id: 'demo-luca', name: 'Luca', lang: 'it', text: 'Ci vediamo domani al caffè?', english: 'See you tomorrow at the café?', minutesAgo: 1700, unread: false },
+  { id: 'demo-noor', name: 'Noor', lang: 'fr', text: 'Je t’envoie les photos ce soir.', english: 'I’ll send you the photos tonight.', minutesAgo: 3400, unread: true },
+  { id: 'friend-alex', name: 'Alex', lang: 'de', text: 'Bis später!', english: 'See you later!', minutesAgo: 9000, unread: false },
+  { id: 'demo-kenji', name: 'Kenji', lang: 'ja', text: '今日の宿題、終わった？', english: 'Did you finish today’s homework?', minutesAgo: 12000, unread: false },
+  { id: 'demo-amara', name: 'Amara', lang: 'fr', text: 'Merci pour hier, c’était génial !', english: 'Thanks for yesterday, it was great!', minutesAgo: 15000, unread: false },
+  { id: 'demo-pablo', name: 'Pablo', lang: 'es', text: 'Nos vemos el viernes.', english: 'See you on Friday.', minutesAgo: 21000, unread: false },
+  { id: 'demo-elif', name: 'Elif', lang: 'de', text: 'Ich habe das Buch gefunden!', english: 'I found the book!', minutesAgo: 30000, unread: false },
+  { id: 'demo-hanna', name: 'Hanna', lang: 'it', text: 'Che bella giornata oggi.', english: 'What a lovely day today.', minutesAgo: 41000, unread: false },
+  { id: 'demo-ravi', name: 'Ravi', lang: 'es', text: '¿Cómo va el curso?', english: 'How is the course going?', minutesAgo: 60000, unread: false },
+];
+
+/**
+ * Demo mode only: give the offline demo learner a populated inbox (and so a real grid to look at).
+ * Runs through the ChatRepository port, so it never touches a configured cloud backend by itself —
+ * the caller decides when demo data is appropriate.
+ */
+export async function seedDemoFriendChats(chat: ChatRepository, viewerId: string): Promise<void> {
+  const existing = await chat.listConversations(viewerId);
+  for (const partner of DEMO_PARTNERS) {
+    const id = `demo-chat-${partner.id}`;
+    if (existing.some((item) => item.id === id)) continue;
+    await chat.createConversation({
+      id,
+      title: partner.name,
+      aiEnabled: false,
+      participantIds: [viewerId, partner.id],
+      participants: [
+        { userId: viewerId, nativeLang: 'en', learningLang: partner.lang },
+        { userId: partner.id, nativeLang: partner.lang, learningLang: 'en' },
+      ],
+    });
+    await chat.appendMessage(
+      sourceMessageFromText({
+        id: `${id}-m1`,
+        conversationId: id,
+        authorId: partner.id,
+        sourceLang: partner.lang,
+        sourceText: partner.text,
+        receipt: partner.unread ? 'delivered' : 'read',
+        createdAt: new Date(Date.now() - partner.minutesAgo * 60_000).toISOString(),
+      })
+    );
+    await chat.saveTranslations(`${id}-m1`, [
+      { lineIndex: 0, targetLang: 'en', text: partner.english, mode: 'lines' },
+      { lineIndex: 0, targetLang: partner.lang, text: partner.text, mode: 'lines' },
+    ]);
+    if (!partner.unread) await chat.markConversationRead(id, [viewerId]);
   }
 }

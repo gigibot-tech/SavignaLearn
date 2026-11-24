@@ -17,7 +17,7 @@ import {
 import { cardIsOnline, formatCardPresence, profileCardFor } from '@/domain';
 import { currentFriendShareUrl, findOrCreateDirectChat, publicHandleForUser } from '@/adapters/friends';
 import { chatPersistenceUserId } from '@/adapters/identity';
-import { learningBotHref, profileHref } from '@/adapters/postLogin';
+import { chatHref, profileHref } from '@/adapters/postLogin';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { useFriendsQuery, useProfileCardsQuery } from '@/features/query/useChatQueries';
@@ -113,7 +113,7 @@ export function FriendsScreen() {
       displayName: row.displayName,
       email: row.email,
     });
-    router.push(learningBotHref(conv.id));
+    router.push(chatHref(conv.id));
   };
 
   const removeRow = async (row: FriendRow) => {

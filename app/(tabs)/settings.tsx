@@ -7,13 +7,9 @@ import { getIdoEmail, isIdoAiConfigured, signInIdo, signOutIdo } from '@/adapter
 import { currentFriendShareUrl } from '@/adapters/friends';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
-import {
-  AiConnectionPanel,
-  GlassPanel,
-  GradientCta,
-  GradientScreen,
-  useThemeColors,
-} from '@/features/chat/chatUi';
+import { AlphaNotice } from '@/features/alpha';
+import { AiConnectionPanel } from '@/features/chat/ChatSettings';
+import { GlassPanel, GradientCta, GradientScreen, useThemeColors } from '@/features/chat/chatUi';
 import { ProfileSettingsCard } from '@/features/profile/ProfileSettingsCard';
 import { AppearanceThemePicker } from '@/features/shell/AppearanceProvider';
 import { useNotifications } from '@/features/notifications/NotificationProvider';
@@ -67,6 +63,7 @@ export default function SettingsScreen() {
           SavignaLearn
         </Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>App settings</Text>
+        <AlphaNotice colors={colors} />
         <GlassPanel colors={colors} style={styles.card}>
           <Text style={{ color: colors.text, fontWeight: '600' }}>
             {user?.email ?? 'Not signed in'}

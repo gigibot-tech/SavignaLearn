@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { unreadTotal } from '@/domain/unread';
+import { unreadTotal } from '@/domain/inbox';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { useFriendsQuery, useInboxQuery } from '@/features/query/useChatQueries';
 import { queryKeys } from '@/features/query/queryKeys';

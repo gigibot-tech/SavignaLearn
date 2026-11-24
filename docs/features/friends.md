@@ -1,6 +1,10 @@
 # Friends
 
-Chat + friends only (no meetups). Desktop uses a **collapsible** side column: collapsed icon rail by default; the rail’s **menu** expands Chats / Friends / Settings + lists. Picking a **chat**, **friend name → profile**, **Chat**, or **Settings** collapses the panel again. **Chats / Friends / Settings tabs stay on screen** on every main screen, including a thread and a profile. Thread header **back** returns to the previous screen (or Chats). Chat connection, languages, and bot replies live in the **thread header** (sliders sheet below 1024px; inline chips at L/XL).
+Chat + friends only (no meetups).
+
+**Phone (< 768px):** the Chats / Friends / Settings tab bar stays on every main screen. Chats home is a **grid of conversation tiles** (two or more per row) with search, All / Unread / Online chips and a grid ↔ list switch (remembered). Thread header **back** returns to the previous screen (or Chats). Languages and bot replies live in the thread header (sliders sheet).
+
+**Desktop / tablet (≥ 768px):** WhatsApp Web layout — a permanent **nav rail** (Chats / Friends / Settings, your photo) and, on Chats, a permanent **chat list pane** beside the open conversation. Nothing collapses; the open chat is highlighted and picking another swaps it in place. There is no bottom tab bar and no thread back button. From 1024px the languages / display chips sit inline under the thread header. Which AI backend answers is chosen in the settings sheet or app Settings, not on the thread header.
 
 ## Add a friend
 

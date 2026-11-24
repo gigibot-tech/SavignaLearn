@@ -8,22 +8,22 @@ import {
 import { InMemoryChatRepository } from './memoryChat';
 import { LEARNING_BOT_USER_ID } from '@/domain/chat';
 
+/** A cloud stand-in that counts inbox reads. (Spreading an instance would drop its prototype methods.) */
+class CountingCloud extends InMemoryChatRepository {
+  listCalls = 0;
+
+  override async listConversations(userId: string) {
+    this.listCalls += 1;
+    return super.listConversations(userId);
+  }
+}
+
 describe('PolicyChatRepository', () => {
   it('stays local-first and does not hit cloud on inbox load', async () => {
-    const cloud = new InMemoryChatRepository();
+    const cloud = new CountingCloud();
     const local = new InMemoryChatRepository();
-    let cloudListCalls = 0;
     const repo = new PolicyChatRepository(
-      {
-        local,
-        cloud: {
-          ...cloud,
-          async listConversations(userId) {
-            cloudListCalls += 1;
-            return cloud.listConversations(userId);
-          },
-        },
-      },
+      { local, cloud },
       new LocalFirstChatPolicy(new InMemoryChatRouteBook())
     );
     const conv = await repo.createConversation({
@@ -36,7 +36,7 @@ describe('PolicyChatRepository', () => {
       title: 'SavignasBoi',
     });
     expect((await repo.listConversations('u1')).map((c) => c.id)).toContain(conv.id);
-    expect(cloudListCalls).toBe(0);
+    expect(cloud.listCalls).toBe(0);
     expect(await cloud.listConversations('u1')).toEqual([]);
   });
 

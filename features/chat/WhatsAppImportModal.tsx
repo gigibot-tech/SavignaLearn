@@ -7,18 +7,18 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { router } from 'expo-router';
 import { usernameFromUser } from '@/adapters/friends';
 import { chatPersistenceUserId } from '@/adapters/identity';
-import { learningBotHref } from '@/adapters/postLogin';
+import { chatHref } from '@/adapters/postLogin';
 import { importWhatsAppConversation } from '@/adapters/whatsappImport';
 import {
   guessPartner,
   guessSelfSpeaker,
   parseWhatsAppTranscript,
+  partnerCandidatesFromFriends,
   type WhatsAppParseResult,
 } from '@/domain/whatsappImport';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { useFriendsQuery } from '@/features/query/useChatQueries';
 import { GradientCta, useThemeColors } from '@/features/chat/chatUi';
-import { useAppShell } from '@/features/shell/AppShell';
 import { useColorScheme } from '@/components/useColorScheme';
 import type { ThemeColors } from '@/constants/Colors';
 
@@ -52,16 +52,17 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
   const colors = useThemeColors(scheme);
   const { chat, bumpFriends } = useServices();
   const { user } = useAuthState();
-  const { collapseSidebar } = useAppShell();
   const [paste, setPaste] = useState('');
   const [parsed, setParsed] = useState<WhatsAppParseResult | null>(null);
   const [selfSpeaker, setSelfSpeaker] = useState<string | null>(null);
   const [otherSpeaker, setOtherSpeaker] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState<string>(LOCAL_PARTNER);
   const friendsQuery = useFriendsQuery();
-  const friendsRows = (friendsQuery.data ?? []).filter(
-    (row) => row.kind === 'accepted' && !row.inconsistent
+  const accepted = useMemo(
+    () => (friendsQuery.data ?? []).filter((row) => row.kind === 'accepted' && !row.inconsistent),
+    [friendsQuery.data]
   );
+  const partnerCandidates = useMemo(() => partnerCandidatesFromFriends(accepted), [accepted]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -77,7 +78,6 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
     [user]
   );
 
-  const accepted = friendsRows;
 
   const applyParse = () => {
     setError(null);
@@ -91,7 +91,7 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
     const selfGuess = guessSelfSpeaker(names, selfHints);
     const self = selfGuess.speaker ?? names[0];
     const other = names.find((name) => name !== self) ?? names[1];
-    const partnerGuess = guessPartner(other, accepted);
+    const partnerGuess = guessPartner(other, partnerCandidates);
     setParsed(next);
     setSelfSpeaker(self);
     setOtherSpeaker(other);
@@ -100,11 +100,11 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
 
   useEffect(() => {
     if (!parsed || !otherSpeaker) return;
-    const partnerGuess = guessPartner(otherSpeaker, accepted);
+    const partnerGuess = guessPartner(otherSpeaker, partnerCandidates);
     if (!partnerGuess.unsure && partnerGuess.partnerId) {
       setPartnerId(partnerGuess.partnerId);
     }
-  }, [parsed, otherSpeaker, accepted]);
+  }, [parsed, otherSpeaker, partnerCandidates]);
 
   const pickSelf = (name: string) => {
     setSelfSpeaker(name);
@@ -149,11 +149,10 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
         return;
       }
       bumpFriends();
-      collapseSidebar();
       onClose();
       setPaste('');
       setParsed(null);
-      router.push(learningBotHref(result.conversationId));
+      router.push(chatHref(result.conversationId));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Import failed');
     } finally {
@@ -162,7 +161,7 @@ export function WhatsAppImportModal({ visible, onClose }: { visible: boolean; on
   };
 
   const selfGuess = parsed ? guessSelfSpeaker(parsed.speakers.map((item) => item.name), selfHints) : null;
-  const otherGuess = parsed && otherSpeaker ? guessPartner(otherSpeaker, accepted) : null;
+  const otherGuess = parsed && otherSpeaker ? guessPartner(otherSpeaker, partnerCandidates) : null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>

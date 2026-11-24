@@ -4,6 +4,7 @@ import {
   guessPartner,
   guessSelfSpeaker,
   parseWhatsAppTranscript,
+  partnerCandidatesFromFriends,
   whatsappNameSimilarity,
 } from './whatsappImport';
 
@@ -129,6 +130,15 @@ describe('whatsapp import parse', () => {
     ]);
     expect(guess.partnerId).toBe('sav');
     expect(guess.unsure).toBe(false);
+  });
+
+  it('finds the partner among friend rows, which are keyed by userId', () => {
+    const friends = [
+      { userId: 'u-mira', username: 'mira', displayName: 'Mira', email: 'mira@savigna.local' },
+      { userId: 'u-sav', username: 'savigna', displayName: 'Savigna', email: 'savigna@savigna.local' },
+    ];
+    const guess = guessPartner('Savi(g)na 🔥', partnerCandidatesFromFriends(friends));
+    expect(guess.partnerId).toBe('u-sav');
   });
 
   it('marks the self guess unsure when names do not match', () => {

@@ -112,7 +112,7 @@ export class InMemoryFriendsRepository implements FriendsRepository {
       ...previous,
       ...into,
       username: into.username || previous?.username || normalizeUsername(into.displayName),
-      email: into.email || previous?.email,
+      email: into.email || previous?.email || '',
     });
     if (fromId !== into.id) this.profiles.delete(fromId);
     for (const row of this.friendships) {
@@ -124,7 +124,7 @@ export class InMemoryFriendsRepository implements FriendsRepository {
   async registerProfile(profile: PublicProfile): Promise<void> {
     const email = profile.email ? normalizeEmail(profile.email) : undefined;
     const byEmail = email ? this.profileByEmail(email) : undefined;
-    if (byEmail && byEmail.id !== profile.id) {
+    if (email && byEmail && byEmail.id !== profile.id) {
       this.rebindProfile(byEmail.id, { ...profile, email });
       return;
     }
@@ -395,6 +395,20 @@ export function conversationTitleFor(
   const profile = otherId ? memoryFriends.profiles.get(otherId) : undefined;
   if (profile) return inboxPartnerTitle(profile, memoryFriends.profiles.values());
   return conversation.title ?? fallback;
+}
+
+/** Prefer the bound thread, then inbox cache — never the previous chat’s title. */
+export function threadChromeTitle(input: {
+  conversation: Conversation | null | undefined;
+  inbox?: Conversation[] | null;
+  conversationId: string;
+  viewerIds: string[];
+}): string {
+  const live =
+    input.conversation?.id === input.conversationId
+      ? input.conversation
+      : input.inbox?.find((item) => item.id === input.conversationId);
+  return conversationTitleFor(live, input.viewerIds, 'Chat');
 }
 
 export function currentFriendShareUrl(userId: string): string {

@@ -5,14 +5,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { LearningItem } from '@/domain/learning';
+import type { LearningItemRepository } from '@/ports/ports';
 import type { ThemeColors } from '@/constants/Colors';
 import { listTippedVocabularyCards } from '@/adapters/vocabulary';
 import { chatPersistenceUserId } from '@/adapters/identity';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
 import { useVocabCardFromTap } from '@/features/vocabulary/CreateVocabCardModal';
 
-function subscribeItems(items: { subscribe?: (listener: () => void) => () => void }, listener: () => void) {
-  return typeof items.subscribe === 'function' ? items.subscribe(listener) : () => {};
+function subscribeItems(items: LearningItemRepository, listener: () => void) {
+  return items.subscribe?.(listener) ?? (() => {});
 }
 
 export function useTippedVocabularyCards(userId: string | undefined): LearningItem[] {

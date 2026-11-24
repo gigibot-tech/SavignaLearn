@@ -24,7 +24,7 @@ import { canonicalChatActorId } from '@/domain/friends';
 import { profileLookupIds } from '@/domain/profileCard';
 import { findOrCreateDirectChat } from '@/adapters/friends';
 import { chatActorIds, chatPersistenceUserId, isChatSelf } from '@/adapters/identity';
-import { learningBotHref, routeParam } from '@/adapters/postLogin';
+import { chatHref, routeParam } from '@/adapters/postLogin';
 import { ensureLearningBotChat } from '@/adapters/chat';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuthState, useServices } from '@/features/chat/AppProviders';
@@ -171,7 +171,7 @@ export function ProfileScreen() {
 
   const openChat = () => {
     if (!conversation) return;
-    router.push(learningBotHref(conversation.id));
+    router.push(chatHref(conversation.id));
   };
 
   const removeFriend = async () => {

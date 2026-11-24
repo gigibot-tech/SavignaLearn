@@ -16,6 +16,7 @@ export type ChatStorageBackendId = 'local' | 'cloud';
 
 type MemoryCompatibleChat = ChatRepository & {
   conversations: Conversation[];
+  messages?: Map<string, SourceMessage[]>;
   seedDemo?: (viewerId: string, partnerId: string) => void;
   hydrateForUser?: (userId: string, aliases?: string[]) => Promise<void>;
   persistUser?: (userId: string) => Promise<void>;

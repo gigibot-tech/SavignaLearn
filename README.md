@@ -29,7 +29,9 @@ Web production on Netlify uses `npm run build:web` and publish directory **`dist
 | `domain/` | Pure chat + learning models (no React) |
 | `ports/` | ISP ports |
 | `adapters/` | Supabase, translation, chat repo, AI |
-| `features/chat/` | Inbox, thread, composer UI |
+| `features/inbox/` | Chats home: conversation grid / list, toolbar, filters, first-run screen |
+| `features/shell/` | Desktop frame: nav rail + permanent chat list pane |
+| `features/chat/` | Thread: `ThreadScreen` (layout), `useThreadController` (behaviour), `MessageBubble`, `Composer`, `ChatSettings` |
 | `docs/architecture/gigolingo-seams.md` | How Gigolingo plugs in |
 | `.cursor/skills/` | Clean-code gate after each subtask |
 

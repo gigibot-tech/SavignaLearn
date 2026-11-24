@@ -6,7 +6,7 @@ Acceptance criteria for the translation epic.
 
 - `buildDetectThenTranslatePrompt` forces **STEP 1: identify source language** before translation.
 - `TranslationLlmPayload` / `AsymmetricLanguageContext` always include **both** users’ learning languages; primary `translateInto` is the **receiver’s** learning language.
-- Outbound send uses `processOutgoingTranslation` (see `ChatScreens` thread send).
+- Outbound send uses `processOutgoingTranslation` (see `useThreadController` send).
 - SavignasBoi replies use **JSON mode**: `{"learning_text","native_text","detected_source_lang"}` via `completeBilingualBotReply` (`json: true`, iDO feature `savigna-chat`). The bubble never shows that JSON — `MessageBubble` renders learning + native lines from `LineTranslation`s.
 - Learner outgoing `sourceLang` is always **I speak** (`nativeLang`). Do not detect-then-retag a user send as the learning language, even if the sentence contains an L2 word. Own-bubble primary tag is I speak; primary text is `sourceText`.
 - `parseBilingualChatJson` fails closed when `learning_text` equals `native_text` and the langs differ. `load` / subscribe merge via `mergeLineTranslations` so a later incomplete snapshot cannot drop a stored `mode: 'lines'` native row.

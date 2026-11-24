@@ -1,4 +1,4 @@
-import { InboxScreen } from '@/features/chat/ChatScreens';
+import { InboxScreen } from '@/features/inbox/InboxScreens';
 
 export default function ChatsTab() {
   return <InboxScreen />;
